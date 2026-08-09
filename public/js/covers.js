@@ -110,12 +110,23 @@ export function generatedCover(tape) {
 </svg>`;
 }
 
-/** Cover markup: real poster <img> or generated SVG. */
+export function isSealed(tape) {
+  return Boolean(tape.sealed) || tape.condition === "sealed";
+}
+
+/**
+ * Shrink-wrap overlay for sealed tapes: a specular glint plus wrap wrinkles,
+ * positioned by the global --tilt-x/--tilt-y vars so it slides with device
+ * orientation like light moving across plastic.
+ */
+const SEAL_GLINT = `<span class="seal-glint" aria-hidden="true"></span>`;
+
+/** Cover markup: real poster <img> or generated SVG, plus seal glint when sealed. */
 export function coverArt(tape) {
-  if (tape.posterUrl) {
-    return `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" onerror="this.outerHTML=window.__vhsFallbackCover(this.dataset.t)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`;
-  }
-  return generatedCover(tape);
+  const art = tape.posterUrl
+    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" onerror="this.outerHTML=window.__vhsFallbackCover(this.dataset.t)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
+    : generatedCover(tape);
+  return isSealed(tape) ? art + SEAL_GLINT : art;
 }
 
 // Fallback hook for broken poster URLs (referenced from the onerror attribute).

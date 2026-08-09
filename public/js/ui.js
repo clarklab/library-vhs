@@ -111,6 +111,61 @@ export function emptyState({ icon, title, message }) {
     </div>`;
 }
 
+/**
+ * A money input with the dollar sign baked in and a scrub handle: drag the
+ * handle left/right to dial the price in $1 steps (fast when you fling it),
+ * or tap the number to type. Wire with wirePriceFields(container).
+ */
+export function priceField({ name, value = "", placeholder = "0" }) {
+  const shown = value === null || value === undefined || value === "" ? "" : String(value);
+  return `
+    <span class="price-field" data-price-field>
+      <span class="price-prefix">$</span>
+      <input name="${esc(name)}" value="${esc(shown)}" inputmode="decimal" placeholder="${esc(placeholder)}" autocomplete="off" />
+      <span class="price-scrub" data-price-scrub role="slider" aria-label="Drag to adjust price" tabindex="-1">${icons.scrub}</span>
+    </span>`;
+}
+
+export function wirePriceFields(container) {
+  container.querySelectorAll("[data-price-field]").forEach((field) => {
+    const input = field.querySelector("input");
+    const scrub = field.querySelector("[data-price-scrub]");
+    if (!scrub || scrub.dataset.wired) return;
+    scrub.dataset.wired = "1";
+
+    const current = () => {
+      const n = Number(String(input.value).replace(/[$,\s]/g, ""));
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    scrub.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startValue = current();
+      field.classList.add("scrubbing");
+
+      const move = (ev) => {
+        const dx = ev.clientX - startX;
+        // $1 per 7px, accelerating on bigger pulls so $5 → $80 is one gesture.
+        const magnitude = Math.abs(dx) / 7;
+        const step = Math.round(magnitude + Math.pow(magnitude / 6, 2));
+        const next = Math.max(0, Math.round(startValue) + Math.sign(dx) * step);
+        input.value = next === 0 && dx < 0 ? "" : String(next);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      const end = () => {
+        field.classList.remove("scrubbing");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", end);
+        window.removeEventListener("pointercancel", end);
+      };
+      window.addEventListener("pointermove", move, { passive: true });
+      window.addEventListener("pointerup", end);
+      window.addEventListener("pointercancel", end);
+    });
+  });
+}
+
 export function spinnerButtonStart(btn, label = "") {
   btn.dataset.originalHtml = btn.innerHTML;
   btn.disabled = true;

@@ -4,6 +4,7 @@ export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
 
 const CONDITIONS = ["sealed", "mint", "good", "fair", "poor"];
 const STATUSES = ["available", "sold", "hold", "keep"];
+const PACKAGING = ["", "slipcase", "bigbox", "clamshell", "screener", "other"];
 
 export default async (req, context) => {
   const auth = await requireAuth(req);
@@ -123,6 +124,11 @@ function sanitizeTape(input, partial = false) {
     },
     format: (v) => str(v, 40) || "VHS",
     edition: (v) => str(v, 200),
+    label: (v) => str(v, 120),
+    packaging: (v) => (PACKAGING.includes(v) ? v : ""),
+    sealed: (v) => v === true || v === "true" || v === "yes" || v === 1,
+    acquiredDate: (v) => str(v, 30),
+    acquiredFrom: (v) => str(v, 200),
     barcode: (v) => str(v, 40),
     condition: (v) => (CONDITIONS.includes(v) ? v : ""),
     status: (v) => (STATUSES.includes(v) ? v : "available"),

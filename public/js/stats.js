@@ -315,15 +315,19 @@ export function renderSettings(root) {
       return;
     }
     const headers = [
-      "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Edition",
-      "Condition", "Status", "Price Paid", "Asking Price", "Sold Price", "Sold Date",
-      "Location", "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
+      "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Studio/Label",
+      "Edition", "Packaging", "Sealed", "Condition", "Status", "Price Paid", "Asking Price",
+      "Sold Price", "Sold Date", "Location", "Where Acquired", "Date Acquired",
+      "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
     ];
     const rows = state.tapes.map((t) => [
       t.title, t.year ?? "", t.director, (t.actors || []).join("; "), t.genre, t.runtime,
-      t.rated, t.edition, conditionLabel(t.condition) === "—" ? "" : t.condition,
+      t.rated, t.label || "", t.edition, t.packaging || "",
+      t.sealed || t.condition === "sealed" ? "yes" : "no",
+      conditionLabel(t.condition) === "—" ? "" : t.condition,
       statusLabel(t.status), t.pricePaid ?? "", t.priceAsking ?? "", t.priceSold ?? "",
-      t.soldDate ?? "", t.location, t.barcode, t.notes, t.imdbRating, t.imdbId,
+      t.soldDate ?? "", t.location, t.acquiredFrom || "", t.acquiredDate || "",
+      t.barcode, t.notes, t.imdbRating, t.imdbId,
       (t.createdAt || "").slice(0, 10),
     ]);
     downloadFile(`vhs-vault-${new Date().toISOString().slice(0, 10)}.csv`, toCsv([headers, ...rows]));

@@ -447,7 +447,7 @@ img { display: block; max-width: 100%; }
   transition: transform 0.12s ease;
   position: relative;
 }
-.cover-art img, .cover-art svg { width: 100%; height: 100%; object-fit: cover; }
+.cover-art img, .cover-art svg { display: block; width: 100%; height: 100%; object-fit: cover; }
 .cover-title {
   margin-top: 7px;
   font-size: 12px;
@@ -507,10 +507,11 @@ img { display: block; max-width: 100%; }
   border-radius: 4px;
   overflow: hidden;
   flex: none;
+  position: relative;
   background: var(--bg-tertiary);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
-.tape-thumb img, .tape-thumb svg { width: 100%; height: 100%; object-fit: cover; }
+.tape-thumb img, .tape-thumb svg { display: block; width: 100%; height: 100%; object-fit: cover; }
 .tape-row-main { flex: 1; min-width: 0; }
 .tape-row-title {
   font-size: 16px;
@@ -796,10 +797,11 @@ img { display: block; max-width: 100%; }
   border-radius: 6px;
   overflow: hidden;
   flex: none;
+  position: relative;
   background: var(--bg-tertiary);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
 }
-.review-thumb img, .review-thumb svg { width: 100%; height: 100%; object-fit: cover; }
+.review-thumb img, .review-thumb svg { display: block; width: 100%; height: 100%; object-fit: cover; }
 .review-main { flex: 1; min-width: 0; }
 .review-title { font-size: 16px; font-weight: 700; }
 .review-sub { font-size: 13px; color: var(--label-secondary); margin: 2px 0 8px; }
@@ -831,10 +833,11 @@ img { display: block; max-width: 100%; }
   border-radius: 8px;
   overflow: hidden;
   flex: none;
+  position: relative;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
   background: var(--bg-tertiary);
 }
-.detail-cover img, .detail-cover svg { width: 100%; height: 100%; object-fit: cover; }
+.detail-cover img, .detail-cover svg { display: block; width: 100%; height: 100%; object-fit: cover; }
 .detail-hero-main { flex: 1; min-width: 0; padding-top: 4px; }
 .detail-title { font-size: 22px; font-weight: 800; line-height: 1.15; }
 .detail-sub { color: var(--label-secondary); font-size: 15px; margin-top: 4px; }
@@ -918,6 +921,193 @@ textarea.big-input:focus { border-color: var(--tint); }
   font-size: 13px;
   outline: none;
 }
+
+/* ---------- Sealed: shrink-wrap glint ---------- */
+/* Reads --tilt-x/--tilt-y (set by tilt.js) so the specular band slides across
+   the cover as the phone tilts — like light on plastic wrap. */
+
+.seal-glint {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+  border-radius: inherit;
+  /* wrap wrinkles: faint fixed creases so it reads as plastic even at rest */
+  background-image:
+    linear-gradient(
+      calc(115deg + var(--tilt-x, 0) * 12deg),
+      transparent calc(24% + var(--tilt-x, 0) * 18%),
+      rgba(255, 255, 255, 0.13) calc(33% + var(--tilt-x, 0) * 18%),
+      rgba(255, 255, 255, 0.55) calc(40% + var(--tilt-x, 0) * 18%),
+      rgba(255, 255, 255, 0.13) calc(47% + var(--tilt-x, 0) * 18%),
+      transparent calc(56% + var(--tilt-x, 0) * 18%)
+    ),
+    linear-gradient(
+      calc(65deg - var(--tilt-y, 0) * 10deg),
+      transparent calc(58% - var(--tilt-y, 0) * 14%),
+      rgba(255, 255, 255, 0.18) calc(66% - var(--tilt-y, 0) * 14%),
+      transparent calc(74% - var(--tilt-y, 0) * 14%)
+    ),
+    linear-gradient(160deg, rgba(255,255,255,0.10) 0 1.5%, transparent 1.5% 11%, rgba(255,255,255,0.07) 11% 12%, transparent 12% 34%, rgba(255,255,255,0.09) 34% 35.5%, transparent 35.5% 62%, rgba(255,255,255,0.06) 62% 63%, transparent 63%);
+  mix-blend-mode: screen;
+  opacity: 0.9;
+}
+.seal-glint::after {
+  /* crisp hot-spot that moves opposite the main band for depth */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    ellipse 45% 30% at
+      calc(50% - var(--tilt-x, 0) * 42%)
+      calc(28% - var(--tilt-y, 0) * 30%),
+    rgba(255, 255, 255, 0.38),
+    transparent 70%
+  );
+}
+
+/* ---------- 3D box covers ---------- */
+/* Slight box rotation driven by the same tilt vars; a dark spine and top edge
+   sell the volume. Pure CSS 3D — cheap enough for a full grid. */
+
+.cover-grid,
+.detail-hero {
+  perspective: 900px;
+}
+.cover-art.box3d {
+  transform-style: preserve-3d;
+  transform: rotateY(calc(var(--tilt-x, 0) * 7deg)) rotateX(calc(var(--tilt-y, 0) * -6deg));
+  will-change: transform;
+}
+.detail-cover.box3d {
+  transform-style: preserve-3d;
+  transform: rotateY(calc(var(--tilt-x, 0) * 12deg)) rotateX(calc(var(--tilt-y, 0) * -9deg));
+  will-change: transform;
+}
+.box3d { overflow: visible !important; position: relative; }
+.box3d > img,
+.box3d > svg {
+  border-radius: inherit;
+  backface-visibility: hidden;
+}
+.box3d .box-spine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 14px;
+  background: linear-gradient(to right, rgba(0,0,0,0.88), rgba(20,20,24,0.96));
+  transform: rotateY(-90deg);
+  transform-origin: left center;
+  border-radius: 2px 0 0 2px;
+}
+.box3d .box-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 14px;
+  background: linear-gradient(to bottom, rgba(35,35,42,0.95), rgba(0,0,0,0.85));
+  transform: rotateX(90deg);
+  transform-origin: center top;
+}
+.box3d .seal-glint { border-radius: inherit; }
+@media (prefers-reduced-motion: reduce) {
+  .cover-art.box3d, .detail-cover.box3d { transform: none; }
+}
+
+/* ---------- Price fields ---------- */
+
+.price-field {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+  justify-content: flex-end;
+  touch-action: pan-y;
+}
+.price-field .price-prefix {
+  color: var(--label-tertiary);
+  font-size: 17px;
+  flex: none;
+}
+.price-field input {
+  flex: 0 1 auto;
+  width: 90px;
+  border: 0;
+  background: transparent;
+  outline: none;
+  text-align: left;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  color: var(--label);
+  min-width: 0;
+  caret-color: var(--tint);
+}
+.price-field .price-scrub {
+  flex: none;
+  width: 34px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--fill);
+  color: var(--label-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.price-field .price-scrub svg { width: 16px; height: 16px; }
+.price-field .price-scrub:active { background: var(--tint-fill); color: var(--tint); }
+.price-field.scrubbing input { color: var(--tint); font-weight: 700; }
+
+.mini-field .price-field { justify-content: flex-start; background: var(--fill); border-radius: 8px; padding: 4px 6px 4px 10px; }
+.mini-field .price-field input { font-size: 15px; width: 100%; }
+.mini-field .price-field .price-prefix { font-size: 15px; }
+.mini-field .price-field .price-scrub { width: 30px; height: 26px; }
+
+/* ---------- iOS switch ---------- */
+
+.switch {
+  position: relative;
+  width: 51px;
+  height: 31px;
+  flex: none;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  z-index: 2;
+  cursor: pointer;
+}
+.switch .knob {
+  position: absolute;
+  inset: 0;
+  border-radius: 100px;
+  background: var(--fill);
+  transition: background 0.2s ease;
+}
+.switch .knob::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.switch input:checked + .knob { background: var(--green); }
+.switch input:checked + .knob::after { transform: translateX(20px); }
 
 .fade-in { animation: fadein 0.25s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

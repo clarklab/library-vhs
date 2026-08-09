@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { icons } from "./icons.js";
 import { esc, resizeImage, parseBulkLine, parseCsv } from "./util.js";
 import { generatedCover } from "./covers.js";
-import { openSheet, toast, spinnerButtonStart, spinnerButtonStop } from "./ui.js";
+import { openSheet, toast, spinnerButtonStart, spinnerButtonStop, wirePriceFields } from "./ui.js";
 import { state, go, back, upsertTapes } from "./app.js";
 
 // ---------- add sheet ----------
@@ -78,10 +78,18 @@ function renderReview(root, items, { source, backView }) {
       <div class="section-pad">
         <div class="group">
           <label class="row"><span class="row-label">Asking price for all</span>
-            <input data-bulk-asking inputmode="decimal" placeholder="$" />
+            <span class="price-field" data-price-field>
+              <span class="price-prefix">$</span>
+              <input data-bulk-asking inputmode="decimal" placeholder="0" autocomplete="off" />
+              <span class="price-scrub" data-price-scrub>${icons.scrub}</span>
+            </span>
           </label>
           <label class="row"><span class="row-label">Paid for all</span>
-            <input data-bulk-paid inputmode="decimal" placeholder="$" />
+            <span class="price-field" data-price-field>
+              <span class="price-prefix">$</span>
+              <input data-bulk-paid inputmode="decimal" placeholder="0" autocomplete="off" />
+              <span class="price-scrub" data-price-scrub>${icons.scrub}</span>
+            </span>
           </label>
           <label class="row"><span class="row-label">Storage location</span>
             <input data-bulk-location placeholder="e.g. Box 7" />
@@ -116,11 +124,19 @@ function renderReview(root, items, { source, backView }) {
             <div class="review-prices">
               <div class="mini-field">
                 <label>Asking</label>
-                <input class="mini-input" inputmode="decimal" placeholder="$" data-asking="${i}" value="${item.priceAsking ?? ""}" />
+                <span class="price-field" data-price-field>
+                  <span class="price-prefix">$</span>
+                  <input inputmode="decimal" placeholder="0" data-asking="${i}" value="${item.priceAsking ?? ""}" autocomplete="off" />
+                  <span class="price-scrub" data-price-scrub>${icons.scrub}</span>
+                </span>
               </div>
               <div class="mini-field">
                 <label>Paid</label>
-                <input class="mini-input" inputmode="decimal" placeholder="$" data-paid="${i}" value="${item.pricePaid ?? ""}" />
+                <span class="price-field" data-price-field>
+                  <span class="price-prefix">$</span>
+                  <input inputmode="decimal" placeholder="0" data-paid="${i}" value="${item.pricePaid ?? ""}" autocomplete="off" />
+                  <span class="price-scrub" data-price-scrub>${icons.scrub}</span>
+                </span>
               </div>
             </div>
           </div>
@@ -145,6 +161,7 @@ function renderReview(root, items, { source, backView }) {
         items[Number(input.dataset.paid)].pricePaid = numOrNull(input.value);
       })
     );
+    wirePriceFields(cards);
   };
 
   const updateSaveLabel = () => {
@@ -152,21 +169,23 @@ function renderReview(root, items, { source, backView }) {
   };
 
   drawCards();
+  wirePriceFields(root.querySelector(".section-pad"));
 
   root.querySelector("[data-back]").addEventListener("click", () => {
     if (backView) go(backView, null, { replace: true });
     else back();
   });
 
+  // Update card inputs in place (no rebuild) so scrubbing the bulk field is smooth.
   root.querySelector("[data-bulk-asking]").addEventListener("input", (e) => {
     const v = numOrNull(e.target.value);
     items.forEach((item) => (item.priceAsking = v));
-    drawCards();
+    cards.querySelectorAll("[data-asking]").forEach((inp) => (inp.value = v ?? ""));
   });
   root.querySelector("[data-bulk-paid]").addEventListener("input", (e) => {
     const v = numOrNull(e.target.value);
     items.forEach((item) => (item.pricePaid = v));
-    drawCards();
+    cards.querySelectorAll("[data-paid]").forEach((inp) => (inp.value = v ?? ""));
   });
 
   root.querySelector("[data-save-all]").addEventListener("click", async (event) => {
@@ -578,6 +597,11 @@ const CSV_FIELDS = [
   { id: "priceSold", label: "Sold Price" },
   { id: "location", label: "Location" },
   { id: "edition", label: "Edition" },
+  { id: "label", label: "Studio / Label" },
+  { id: "packaging", label: "Packaging" },
+  { id: "sealed", label: "Sealed (yes/no)" },
+  { id: "acquiredFrom", label: "Where Acquired" },
+  { id: "acquiredDate", label: "Date Acquired" },
   { id: "barcode", label: "Barcode" },
   { id: "notes", label: "Notes" },
 ];
@@ -594,6 +618,11 @@ const CSV_AUTO = {
   priceAsking: /asking|^price$|sell price|list price/i,
   location: /^(location|box|shelf|storage)/i,
   edition: /^(edition|release|version)/i,
+  label: /^(label|studio|distributor)/i,
+  packaging: /^packag/i,
+  sealed: /^sealed$/i,
+  acquiredFrom: /acquired from|where acquired|source$/i,
+  acquiredDate: /acquired date|date acquired/i,
   barcode: /barcode|upc/i,
   notes: /^(notes?|comments?|description)$/i,
 };
@@ -710,6 +739,12 @@ function renderCsvMapping(root, rows) {
           } else if (field === "condition") {
             const v = value.toLowerCase();
             if (["sealed", "mint", "good", "fair", "poor"].includes(v)) item.condition = v;
+          } else if (field === "sealed") {
+            item.sealed = ["yes", "true", "1", "sealed", "y"].includes(value.toLowerCase());
+          } else if (field === "packaging") {
+            const v = value.toLowerCase().replace(/[\s-]/g, "");
+            const match = { slipcase: "slipcase", bigbox: "bigbox", clamshell: "clamshell", screener: "screener" }[v];
+            item.packaging = match || "other";
           } else {
             item[field] = value;
           }

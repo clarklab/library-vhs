@@ -7,6 +7,7 @@ import { toast } from "./ui.js";
 import { renderLibrary, renderDetail } from "./library.js";
 import { openAddSheet, renderScan, renderAddTitle, renderBulk, renderCsv } from "./addflows.js";
 import { renderStats, renderSales, renderSettings } from "./stats.js";
+import { initTilt } from "./tilt.js";
 
 export const state = {
   user: null,
@@ -298,4 +299,5 @@ function renderOffline(err) {
   });
 }
 
+initTilt();
 boot();
