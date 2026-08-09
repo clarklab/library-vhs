@@ -4,7 +4,7 @@ import { api } from "./api.js";
 import { icons } from "./icons.js";
 import { esc, money, toCsv, downloadFile, statusLabel, conditionLabel } from "./util.js";
 import { coverArt } from "./covers.js";
-import { toast, emptyState, spinnerButtonStart, spinnerButtonStop, confirmSheet } from "./ui.js";
+import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut } from "./app.js";
 
 // ---------- Stats ----------

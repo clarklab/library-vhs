@@ -39,9 +39,8 @@ export function back() {
 window.addEventListener("popstate", (event) => {
   const entry = event.state;
   if (state.user) {
-    state.view = TAB_VIEWS.includes(entry?.view) || entry?.view ? entry?.view || "library" : "library";
+    state.view = entry?.view && entry.view !== "auth" ? entry.view : "library";
     state.viewArg = entry?.arg ?? null;
-    if (!state.view || state.view === "auth") state.view = "library";
   } else {
     state.view = "auth";
   }
@@ -269,13 +268,34 @@ async function boot() {
       state.user = user;
       await loadAndEnter();
       return;
-    } catch {
-      setToken(null);
+    } catch (err) {
+      if (err.status === 401) {
+        setToken(null); // session genuinely expired
+      } else {
+        renderOffline(err);
+        return; // network/server hiccup — keep the session, offer retry
+      }
     }
   }
   state.view = "auth";
   history.replaceState({ view: "auth" }, "");
   render();
+}
+
+function renderOffline(err) {
+  app().innerHTML = `
+    <div class="auth-screen fade-in">
+      <div class="auth-logo">
+        <div class="logo-mark">${logoMark()}</div>
+        <h1>VHS Vault</h1>
+        <p>${esc(err?.status === 0 ? "You appear to be offline." : "Couldn't reach the server.")}</p>
+      </div>
+      <button class="btn mt-16" data-retry>Try Again</button>
+    </div>`;
+  app().querySelector("[data-retry]").addEventListener("click", () => {
+    app().querySelector("[data-retry]").innerHTML = `<span class="spinner"></span>`;
+    boot();
+  });
 }
 
 boot();

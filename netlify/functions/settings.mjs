@@ -1,4 +1,4 @@
-import { usersStore, json, errorResponse, requireAuth } from "../lib/util.mjs";
+import { usersStore, json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
 
 export const config = { path: "/api/settings" };
 
@@ -11,7 +11,7 @@ export default async (req) => {
   }
 
   if (req.method === "PUT" || req.method === "PATCH") {
-    const body = await req.json().catch(() => ({}));
+    const body = await readBody(req);
     const settings = { ...(auth.user.settings || {}) };
 
     if ("omdbKey" in body) {

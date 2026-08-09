@@ -1,4 +1,4 @@
-import { json, errorResponse, requireAuth } from "../lib/util.mjs";
+import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
 import { structured, aiErrorResponse, FriendlyError } from "../lib/ai.mjs";
 
 export const config = { path: "/api/scan" };
@@ -72,13 +72,7 @@ export default async (req) => {
   if (!auth) return errorResponse("Not signed in.", 401);
   if (req.method !== "POST") return errorResponse("Not found", 404);
 
-  let body;
-  try {
-    body = await req.json();
-  } catch {
-    return errorResponse("Invalid request body.");
-  }
-
+  const body = await readBody(req);
   const parsed = parseDataUrl(body.image);
   if (!parsed) return errorResponse("Send a JPEG, PNG, or WebP image as a data URL.");
   if (parsed.bytes > MAX_IMAGE_BYTES) {

@@ -1,4 +1,4 @@
-import { tapesStore, json, errorResponse, requireAuth, newId } from "../lib/util.mjs";
+import { tapesStore, json, errorResponse, requireAuth, newId, readBody } from "../lib/util.mjs";
 
 export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
 
@@ -35,7 +35,7 @@ async function listTapes(auth) {
 }
 
 async function createTapes(req, auth) {
-  const body = await req.json().catch(() => ({}));
+  const body = await readBody(req);
   // Accept a single tape or a batch: { tapes: [...] } or { ...tape }
   const inputs = Array.isArray(body.tapes) ? body.tapes : [body];
   if (inputs.length === 0) return errorResponse("Nothing to add.");
@@ -43,17 +43,26 @@ async function createTapes(req, auth) {
 
   const store = tapesStore();
   const created = [];
+  let failed = 0;
   for (const input of inputs) {
     const tape = sanitizeTape(input);
     if (!tape.title) continue;
     tape.id = newId();
     tape.createdAt = new Date().toISOString();
     tape.updatedAt = tape.createdAt;
-    await store.setJSON(`${auth.userId}/${tape.id}`, tape);
-    created.push(tape);
+    try {
+      await store.setJSON(`${auth.userId}/${tape.id}`, tape);
+      created.push(tape);
+    } catch (err) {
+      // Report partial success rather than failing the whole batch — a blind
+      // retry would duplicate the tapes that were already written.
+      console.error("tape write failed:", err?.message);
+      failed++;
+    }
   }
-  if (created.length === 0) return errorResponse("Every tape needs at least a title.");
-  return json({ tapes: created }, 201);
+  if (created.length === 0 && failed === 0) return errorResponse("Every tape needs at least a title.");
+  if (created.length === 0 && failed > 0) return errorResponse("Saving failed. Please try again.", 500);
+  return json({ tapes: created, failedCount: failed }, 201);
 }
 
 async function updateTape(req, auth, id) {
@@ -62,7 +71,7 @@ async function updateTape(req, auth, id) {
   const existing = await store.get(key, { type: "json" });
   if (!existing) return errorResponse("Tape not found.", 404);
 
-  const body = await req.json().catch(() => ({}));
+  const body = await readBody(req);
   const patch = sanitizeTape(body, true);
   const updated = {
     ...existing,

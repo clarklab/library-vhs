@@ -121,7 +121,9 @@ export function downloadFile(filename, text, type = "text/csv") {
 
 /** Parses "Title (1987)" / "Title, 1987" / "Title - 1987" bulk lines. */
 export function parseBulkLine(line) {
-  const trimmed = line.trim().replace(/^[-*•\d.)\s]+(?=\S)/, "").trim();
+  // Strip list markers ("-", "*", "3.", "12)") but never digits that are part
+  // of the title itself ("10 Things…", "2001: A Space Odyssey", "48 Hrs.").
+  const trimmed = line.trim().replace(/^(?:[-*•]|\d{1,3}[.)])\s+/, "").trim();
   if (!trimmed) return null;
   let match = trimmed.match(/^(.+?)\s*[([]\s*(\d{4})\s*[)\]]\s*$/);
   if (match) return { title: match[1].trim(), year: Number(match[2]) };

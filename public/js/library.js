@@ -343,15 +343,13 @@ export function renderDetail(root, tapeId) {
     }
   });
 
-  form.querySelector("[name=status]")?.addEventListener("change", async (event) => {
-    if (event.target.value === "sold" || tape.status === "sold") {
-      if (await save()) rerender();
-    }
-  });
-
-  root.querySelector("[data-marksold]")?.addEventListener("click", () => {
+  const openSoldSheet = ({ onCancel } = {}) => {
+    let confirmed = false;
     const { close } = openSheet({
       title: "Mark as Sold",
+      onClose: () => {
+        if (!confirmed) onCancel?.();
+      },
       content: `
         <div class="group">
           <label class="row"><span class="row-label">Sold For</span>
@@ -365,6 +363,7 @@ export function renderDetail(root, tapeId) {
     document.querySelector("[data-confirm-sold]").addEventListener("click", async () => {
       const raw = document.querySelector("[name=soldFor]").value.replace(/[$,\s]/g, "");
       const soldFor = raw === "" ? tape.priceAsking : Number(raw);
+      confirmed = true;
       close();
       if (
         await save({
@@ -377,7 +376,20 @@ export function renderDetail(root, tapeId) {
         rerender();
       }
     });
+  };
+
+  const statusSelect = form.querySelector("[name=status]");
+  statusSelect?.addEventListener("change", async (event) => {
+    const newStatus = event.target.value;
+    if (newStatus === "sold" && tape.status !== "sold") {
+      // Route through the sold sheet so priceSold/soldDate get captured.
+      openSoldSheet({ onCancel: () => (statusSelect.value = tape.status || "available") });
+    } else if (tape.status === "sold" && newStatus !== "sold") {
+      if (await save()) rerender();
+    }
   });
+
+  root.querySelector("[data-marksold]")?.addEventListener("click", () => openSoldSheet());
 
   root.querySelector("[data-relookup]").addEventListener("click", async (event) => {
     const btn = event.currentTarget;

@@ -6,14 +6,12 @@ import { esc } from "./util.js";
 const sheetRoot = () => document.getElementById("sheet-root");
 const toastRoot = () => document.getElementById("toast-root");
 
-let sheetCount = 0;
 
 /**
  * Opens an iOS-style bottom sheet. Returns { close, body } where body is the
  * scrollable content element. onClose fires after dismiss animation.
  */
 export function openSheet({ title = "", content = "", onClose = null, showClose = true }) {
-  sheetCount++;
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop";
   const sheet = document.createElement("div");
@@ -42,7 +40,6 @@ export function openSheet({ title = "", content = "", onClose = null, showClose 
   const close = () => {
     if (closed) return;
     closed = true;
-    sheetCount--;
     backdrop.classList.remove("open");
     sheet.classList.remove("open");
     setTimeout(() => {
@@ -103,17 +100,6 @@ export function confirmSheet({ title, message, confirmLabel = "Delete", destruct
         resolve(false);
       });
   });
-}
-
-export function navBar({ left = "", title = "", right = "" }) {
-  return `
-    <div class="navbar">
-      <div class="navbar-inner">
-        <div>${left}</div>
-        <div class="nav-title">${esc(title)}</div>
-        <div>${right}</div>
-      </div>
-    </div>`;
 }
 
 export function emptyState({ icon, title, message }) {

@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { icons } from "./icons.js";
-import { esc, resizeImage, parseBulkLine, parseCsv, money } from "./util.js";
+import { esc, resizeImage, parseBulkLine, parseCsv } from "./util.js";
 import { generatedCover } from "./covers.js";
 import { openSheet, toast, spinnerButtonStart, spinnerButtonStop } from "./ui.js";
 import { state, go, back, upsertTapes } from "./app.js";
@@ -51,6 +51,10 @@ export function openAddSheet() {
     })
   );
 }
+
+// A flow's async continuation must not clobber the screen if the user
+// navigated away (e.g. hardware back) while the request was in flight.
+const stillOn = (view) => state.view === view;
 
 // ---------- shared: review & save ----------
 
@@ -127,7 +131,6 @@ function renderReview(root, items, { source, backView }) {
       btn.addEventListener("click", () => {
         const item = items[Number(btn.dataset.toggle)];
         item.include = item.include === false;
-        syncInputs();
         drawCards();
         updateSaveLabel();
       })
@@ -144,9 +147,6 @@ function renderReview(root, items, { source, backView }) {
     );
   };
 
-  const syncInputs = () => {
-    /* values already synced via input listeners */
-  };
   const updateSaveLabel = () => {
     root.querySelector("[data-save-all]").textContent = `Add ${included().length} to Library`;
   };
@@ -199,12 +199,15 @@ function renderReview(root, items, { source, backView }) {
         source,
       }));
       const created = [];
+      let failed = 0;
       for (let i = 0; i < payload.length; i += 100) {
-        const { tapes } = await api.createTapes(payload.slice(i, i + 100));
+        const { tapes, failedCount } = await api.createTapes(payload.slice(i, i + 100));
         created.push(...tapes);
+        failed += failedCount || 0;
       }
       upsertTapes(created);
-      toast(`Added ${created.length} tape${created.length === 1 ? "" : "s"}. 📼`);
+      if (failed > 0) toast(`Added ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
+      else toast(`Added ${created.length} tape${created.length === 1 ? "" : "s"}. 📼`);
       go("library", null, { replace: true });
     } catch (err) {
       toast(err.message, { error: true });
@@ -344,11 +347,13 @@ function renderScanPreview(root) {
       scan.results = result.tapes.map((t) => ({ ...t, include: true }));
       scan.notes = result.notes || "";
       scan.step = "results";
-      renderScan(root);
+      if (stillOn("scan")) renderScan(root);
     } catch (err) {
-      toast(err.message, { error: true, duration: 4200 });
       scan.step = "preview";
-      renderScan(root);
+      if (stillOn("scan")) {
+        toast(err.message, { error: true, duration: 4200 });
+        renderScan(root);
+      }
     }
   });
 }
@@ -448,12 +453,15 @@ function renderScanResults(root) {
         chosen.map((r) => ({ title: r.title.trim(), year: r.year, edition: r.edition })),
         () => {}
       );
+      if (!stillOn("scan")) return;
       scan.step = "pick"; // reset for next time
       renderReview(root, enriched, { source: "photo", backView: "scan" });
     } catch (err) {
-      toast(err.message, { error: true, duration: 4200 });
       scan.step = "results";
-      renderScan(root);
+      if (stillOn("scan")) {
+        toast(err.message, { error: true, duration: 4200 });
+        renderScan(root);
+      }
     }
   });
 }
@@ -491,8 +499,10 @@ export function renderAddTitle(root) {
     spinnerButtonStart(btn, " Looking up…");
     try {
       const enriched = await enrichItems([{ title, year }]);
+      if (!stillOn("addTitle")) return;
       renderReview(root, enriched, { source: "manual", backView: "addTitle" });
     } catch (err) {
+      if (!stillOn("addTitle")) return;
       toast(err.message, { error: true });
       spinnerButtonStop(btn);
     }
@@ -543,8 +553,10 @@ export function renderBulk(root) {
       const enriched = await enrichItems(lines, (done, total) => {
         btn.innerHTML = `<span class="spinner"></span> ${done}/${total}…`;
       });
+      if (!stillOn("bulk")) return;
       renderReview(root, enriched, { source: "bulk", backView: "bulk" });
     } catch (err) {
+      if (!stillOn("bulk")) return;
       toast(err.message, { error: true });
       spinnerButtonStop(btn);
     }
@@ -577,9 +589,9 @@ const CSV_AUTO = {
   genre: /^genre/i,
   condition: /^cond/i,
   status: /^status$/i,
+  priceSold: /sold|sale price/i,
   pricePaid: /paid|cost|purchase/i,
-  priceAsking: /asking|price$|sell price|list price/i,
-  priceSold: /sold price|sale price/i,
+  priceAsking: /asking|^price$|sell price|list price/i,
   location: /^(location|box|shelf|storage)/i,
   edition: /^(edition|release|version)/i,
   barcode: /barcode|upc/i,
@@ -713,7 +725,6 @@ function renderCsvMapping(root, rows) {
     }
 
     try {
-      let finalItems = items;
       if (wantEnrich) {
         const needs = items.filter((i) => !i.director || !i.year);
         const lookups = needs.slice(0, 100);
@@ -742,14 +753,17 @@ function renderCsvMapping(root, rows) {
 
       btn.innerHTML = `<span class="spinner"></span> Saving…`;
       const created = [];
-      for (let i = 0; i < finalItems.length; i += 100) {
-        const { tapes } = await api.createTapes(
-          finalItems.slice(i, i + 100).map((item) => ({ ...item, source: "csv" }))
+      let failed = 0;
+      for (let i = 0; i < items.length; i += 100) {
+        const { tapes, failedCount } = await api.createTapes(
+          items.slice(i, i + 100).map((item) => ({ ...item, source: "csv" }))
         );
         created.push(...tapes);
+        failed += failedCount || 0;
       }
       upsertTapes(created);
-      toast(`Imported ${created.length} tapes. 📼`);
+      if (failed > 0) toast(`Imported ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
+      else toast(`Imported ${created.length} tapes. 📼`);
       go("library", null, { replace: true });
     } catch (err) {
       toast(err.message, { error: true, duration: 4200 });

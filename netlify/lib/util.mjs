@@ -87,3 +87,9 @@ export function normalizeEmail(email) {
 }
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Parses a JSON request body, always yielding a plain object. */
+export async function readBody(req) {
+  const raw = await req.json().catch(() => null);
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}

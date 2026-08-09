@@ -10,6 +10,7 @@ import {
   newId,
   normalizeEmail,
   EMAIL_RE,
+  readBody,
 } from "../lib/util.mjs";
 
 export const config = { path: "/api/auth/:action" };
@@ -30,7 +31,7 @@ export default async (req, context) => {
 };
 
 async function signup(req) {
-  const body = await req.json().catch(() => ({}));
+  const body = await readBody(req);
   const email = normalizeEmail(body.email);
   const password = String(body.password || "");
 
@@ -57,7 +58,7 @@ async function signup(req) {
 }
 
 async function login(req) {
-  const body = await req.json().catch(() => ({}));
+  const body = await readBody(req);
   const email = normalizeEmail(body.email);
   const password = String(body.password || "");
 

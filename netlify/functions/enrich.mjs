@@ -1,4 +1,4 @@
-import { json, errorResponse, requireAuth } from "../lib/util.mjs";
+import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
 import { structured, aiErrorResponse } from "../lib/ai.mjs";
 
 export const config = { path: "/api/enrich" };
@@ -52,7 +52,7 @@ export default async (req) => {
   if (!auth) return errorResponse("Not signed in.", 401);
   if (req.method !== "POST") return errorResponse("Not found", 404);
 
-  const body = await req.json().catch(() => ({}));
+  const body = await readBody(req);
   const items = Array.isArray(body.items) ? body.items.slice(0, MAX_ITEMS) : [];
   const cleaned = items
     .map((item) => ({
