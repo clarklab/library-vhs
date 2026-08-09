@@ -726,12 +726,12 @@ function renderCsvMapping(root, rows) {
 
     try {
       if (wantEnrich) {
-        const needs = items.filter((i) => !i.director || !i.year);
-        const lookups = needs.slice(0, 100);
+        // Enrich every row: your CSV values win, lookups fill the gaps —
+        // and cover art / IMDb data always comes along when available.
         let done = 0;
-        for (let i = 0; i < lookups.length; i += 25) {
-          const chunk = lookups.slice(i, i + 25);
-          btn.innerHTML = `<span class="spinner"></span> Looking up ${Math.min(done + chunk.length, lookups.length)}/${lookups.length}…`;
+        for (let i = 0; i < items.length; i += 25) {
+          const chunk = items.slice(i, i + 25);
+          btn.innerHTML = `<span class="spinner"></span> Looking up ${Math.min(done + chunk.length, items.length)}/${items.length}…`;
           const { results } = await api.enrich(chunk.map((c) => ({ title: c.title, year: c.year })));
           chunk.forEach((item, j) => {
             const hit = results?.[j];
@@ -739,13 +739,13 @@ function renderCsvMapping(root, rows) {
             item.year = item.year ?? hit.year;
             item.director = item.director || hit.director;
             item.genre = item.genre || hit.genre;
-            item.actors = hit.actors;
-            item.runtime = hit.runtime;
-            item.rated = hit.rated;
-            item.plot = hit.plot;
-            item.imdbRating = hit.imdbRating;
-            item.imdbId = hit.imdbId;
-            item.posterUrl = hit.posterUrl;
+            item.actors = item.actors?.length ? item.actors : hit.actors;
+            item.runtime = item.runtime || hit.runtime;
+            item.rated = item.rated || hit.rated;
+            item.plot = item.plot || hit.plot;
+            item.imdbRating = item.imdbRating || hit.imdbRating;
+            item.imdbId = item.imdbId || hit.imdbId;
+            item.posterUrl = item.posterUrl || hit.posterUrl;
           });
           done += chunk.length;
         }

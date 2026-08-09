@@ -1,4 +1,4 @@
-import { usersStore, json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
+import { usersStore, json, errorResponse, requireAuth, readBody, getOmdbKey } from "../lib/util.mjs";
 
 export const config = { path: "/api/settings" };
 
@@ -7,7 +7,7 @@ export default async (req) => {
   if (!auth) return errorResponse("Not signed in.", 401);
 
   if (req.method === "GET") {
-    return json({ settings: publicSettings(auth.user.settings) });
+    return json({ settings: publicSettings(auth.user.settings, auth) });
   }
 
   if (req.method === "PUT" || req.method === "PATCH") {
@@ -24,12 +24,16 @@ export default async (req) => {
 
     const updated = { ...auth.user, settings };
     await usersStore().setJSON(auth.userId, updated);
-    return json({ settings: publicSettings(settings) });
+    return json({ settings: publicSettings(settings, { user: updated }) });
   }
 
   return errorResponse("Not found", 404);
 };
 
-function publicSettings(settings = {}) {
-  return { hasOmdbKey: Boolean(settings.omdbKey) };
+function publicSettings(settings = {}, auth = null) {
+  return {
+    hasOmdbKey: Boolean(settings.omdbKey),
+    // True when OMDb lookups will run — via the user's key or a site-wide env var.
+    omdbActive: Boolean(getOmdbKey(auth)),
+  };
 }

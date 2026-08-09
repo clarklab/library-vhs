@@ -31,7 +31,7 @@ A mobile-first VHS collection inventory tracker, built to run entirely on **Netl
 1. Push this repo to GitHub and create a Netlify site from it (or `netlify deploy`). Build settings are in `netlify.toml` — publish dir `public/`, functions in `netlify/functions/`.
 2. Deploy to production once. On credit-based Netlify plans, **AI Gateway activates automatically** — the functions pick up `ANTHROPIC_API_KEY`/`ANTHROPIC_BASE_URL` with no configuration. (AI usage bills against your Netlify credits.)
 3. That's it. Optionally:
-   - Set an `OMDB_API_KEY` environment variable as a site-wide default for posters/ratings, and/or let each user save their own key in Settings (free at [omdbapi.com](https://www.omdbapi.com/apikey.aspx)).
+   - Set an OMDb API key environment variable as a site-wide default for posters/ratings — any of `OMDB_API_KEY`, `OMDB_KEY`, `omdb`, or `OMDB` works — and/or let each user save their own key in Settings (free at [omdbapi.com](https://www.omdbapi.com/apikey.aspx)). Settings shows whether OMDb is connected, and "Get Posters & Details for All Tapes" retroactively fills covers and metadata for tapes added before the key existed.
    - Set `VHS_AI_MODEL` to override the default model (`claude-opus-5`).
 
 Local dev: `npm install && npx netlify dev` (linked to a Netlify site so Blobs and AI Gateway work).

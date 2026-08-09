@@ -5,7 +5,7 @@ import { icons } from "./icons.js";
 import { esc, money, toCsv, downloadFile, statusLabel, conditionLabel } from "./util.js";
 import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
-import { state, go, signOut } from "./app.js";
+import { state, go, signOut, upsertTapes } from "./app.js";
 
 // ---------- Stats ----------
 
@@ -178,16 +178,24 @@ export function renderSettings(root) {
 
         <div class="group-label" style="padding-left:0">Movie Data</div>
         <div class="group">
+          <div class="row"><span class="row-label">OMDb</span><span class="row-value" data-omdb-status>Checking…</span></div>
+          <button class="row tappable" data-refresh-all>
+            <span class="row-label" style="color:var(--tint)" data-refresh-label>Get Posters &amp; Details for All Tapes</span>
+          </button>
+        </div>
+        <p class="hint" style="padding-left:0">Fills in real cover art, IMDb ratings, and credits for every tape that's missing them. Your own edits and prices are never overwritten.</p>
+
+        <div class="group mt-16">
           <label class="row stacked">
-            <span class="field-label">OMDb API key (optional)</span>
+            <span class="field-label">Personal OMDb API key (optional)</span>
             <input name="omdbKey" class="mini-input" style="background:var(--fill); border-radius:8px; padding:9px 10px; border:0; outline:none; text-align:left"
-              placeholder="${state.user?.settings?.hasOmdbKey ? "••••••••  (key saved)" : "Paste key for real posters & ratings"}" autocapitalize="off" autocomplete="off" />
+              placeholder="${state.user?.settings?.hasOmdbKey ? "••••••••  (key saved)" : "Paste key from omdbapi.com"}" autocapitalize="off" autocomplete="off" />
           </label>
           <button class="row tappable" data-save-key>
             <span class="row-label" style="color:var(--tint)">Save Key</span>
           </button>
         </div>
-        <p class="hint" style="padding-left:0">Free at omdbapi.com — adds real cover art, IMDb ratings, and verified credits. Without it, the AI still fills in details and the app generates retro covers.</p>
+        <p class="hint" style="padding-left:0">Only needed if the site doesn't have a shared key. Free at omdbapi.com.</p>
 
         <div class="group-label" style="padding-left:0">Your Data</div>
         <div class="group">
@@ -206,6 +214,86 @@ export function renderSettings(root) {
         <p class="centered-note mt-24">VHS Vault · Be kind, rewind 📼<br/>Photo scanning powered by Claude via Netlify AI Gateway</p>
       </div>
     </div>`;
+
+  // Live OMDb status (covers both site-wide env keys and the user's own key).
+  const statusEl = root.querySelector("[data-omdb-status]");
+  api
+    .getSettings()
+    .then(({ settings }) => {
+      statusEl.textContent = settings.omdbActive
+        ? settings.hasOmdbKey
+          ? "Connected (your key)"
+          : "Connected (site key)"
+        : "Not connected — AI only";
+      statusEl.style.color = settings.omdbActive ? "var(--green)" : "";
+    })
+    .catch(() => {
+      statusEl.textContent = "Unknown";
+    });
+
+  root.querySelector("[data-refresh-all]").addEventListener("click", async (event) => {
+    const btn = event.currentTarget;
+    const label = btn.querySelector("[data-refresh-label]");
+    if (btn.dataset.busy) return;
+
+    const needsWork = (t) =>
+      !t.posterUrl || !t.director || !t.year || !t.plot || !t.imdbRating;
+    const targets = state.tapes.filter(needsWork);
+    if (targets.length === 0) {
+      toast("Every tape already has full details. 📼");
+      return;
+    }
+
+    btn.dataset.busy = "1";
+    let updatedCount = 0;
+    let postersAdded = 0;
+    try {
+      for (let i = 0; i < targets.length; i += 25) {
+        const chunk = targets.slice(i, i + 25);
+        label.textContent = `Looking up ${Math.min(i + chunk.length, targets.length)}/${targets.length}…`;
+        const { results } = await api.enrich(
+          chunk.map((t) => ({ title: t.title, year: t.year }))
+        );
+        const updates = chunk
+          .map((tape, j) => {
+            const hit = results?.[j];
+            if (!hit?.matched) return null;
+            // Fill blanks only — user-entered data always wins.
+            const patch = {};
+            if (!tape.posterUrl && hit.posterUrl) patch.posterUrl = hit.posterUrl;
+            if (!tape.year && hit.year) patch.year = hit.year;
+            if (!tape.director && hit.director) patch.director = hit.director;
+            if (!(tape.actors || []).length && hit.actors?.length) patch.actors = hit.actors;
+            if (!tape.genre && hit.genre) patch.genre = hit.genre;
+            if (!tape.runtime && hit.runtime) patch.runtime = hit.runtime;
+            if (!tape.rated && hit.rated) patch.rated = hit.rated;
+            if (!tape.plot && hit.plot) patch.plot = hit.plot;
+            if (!tape.imdbRating && hit.imdbRating) patch.imdbRating = hit.imdbRating;
+            if (!tape.imdbId && hit.imdbId) patch.imdbId = hit.imdbId;
+            if (Object.keys(patch).length === 0) return null;
+            if (patch.posterUrl) postersAdded++;
+            return { id: tape.id, patch };
+          })
+          .filter(Boolean);
+        const saved = await Promise.all(
+          updates.map(({ id, patch }) => api.updateTape(id, patch).then((r) => r.tape))
+        );
+        upsertTapes(saved);
+        updatedCount += saved.length;
+      }
+      toast(
+        updatedCount
+          ? `Updated ${updatedCount} tape${updatedCount === 1 ? "" : "s"}${postersAdded ? ` · ${postersAdded} new cover${postersAdded === 1 ? "" : "s"}` : ""}. 📼`
+          : "No new details found.",
+        { duration: 4200 }
+      );
+    } catch (err) {
+      toast(err.message, { error: true, duration: 4200 });
+    } finally {
+      delete btn.dataset.busy;
+      label.textContent = "Get Posters & Details for All Tapes";
+    }
+  });
 
   root.querySelector("[data-save-key]").addEventListener("click", async (event) => {
     const input = root.querySelector("[name=omdbKey]");

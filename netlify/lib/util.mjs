@@ -88,6 +88,18 @@ export function normalizeEmail(email) {
 
 export const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** The user's own OMDb key, else the site-wide key from any common env-var spelling. */
+export function getOmdbKey(auth) {
+  return (
+    auth?.user?.settings?.omdbKey ||
+    process.env.OMDB_API_KEY ||
+    process.env.OMDB_KEY ||
+    process.env.omdb ||
+    process.env.OMDB ||
+    ""
+  );
+}
+
 /** Parses a JSON request body, always yielding a plain object. */
 export async function readBody(req) {
   const raw = await req.json().catch(() => null);
