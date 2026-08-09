@@ -155,6 +155,11 @@ export function wirePriceFields(container) {
       };
       const end = () => {
         field.classList.remove("scrubbing");
+        try {
+          navigator.vibrate?.(5);
+        } catch {
+          /* no-op */
+        }
         window.removeEventListener("pointermove", move);
         window.removeEventListener("pointerup", end);
         window.removeEventListener("pointercancel", end);

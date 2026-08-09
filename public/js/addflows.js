@@ -6,10 +6,12 @@ import { esc, resizeImage, parseBulkLine, parseCsv } from "./util.js";
 import { generatedCover } from "./covers.js";
 import { openSheet, toast, spinnerButtonStart, spinnerButtonStop, wirePriceFields } from "./ui.js";
 import { state, go, back, upsertTapes } from "./app.js";
+import { tapeInsertMoment, buzz } from "./delight.js";
 
 // ---------- add sheet ----------
 
 export function openAddSheet() {
+  buzz(8);
   const { close } = openSheet({
     title: "Add Tapes",
     content: `
@@ -225,8 +227,12 @@ function renderReview(root, items, { source, backView }) {
         failed += failedCount || 0;
       }
       upsertTapes(created);
-      if (failed > 0) toast(`Added ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
-      else toast(`Added ${created.length} tape${created.length === 1 ? "" : "s"}. 📼`);
+      if (failed > 0) {
+        toast(`Added ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
+      } else {
+        await tapeInsertMoment(`${created.length} tape${created.length === 1 ? "" : "s"} filed away`);
+        toast(`Added ${created.length} tape${created.length === 1 ? "" : "s"}. 📼`);
+      }
       go("library", null, { replace: true });
     } catch (err) {
       toast(err.message, { error: true });
@@ -382,7 +388,12 @@ function renderScanLoading(root, label) {
     <div class="screen no-tabs">
       ${scanNav("Scanning…")}
       <div class="section-pad">
-        <div class="photo-preview"><img src="${scan.imageDataUrl}" alt="" style="opacity:.55" /></div>
+        <div class="photo-preview scanning">
+          <img src="${scan.imageDataUrl}" alt="" />
+          <span class="vf-corner tl"></span><span class="vf-corner tr"></span>
+          <span class="vf-corner bl"></span><span class="vf-corner br"></span>
+          <div class="scan-beam"></div>
+        </div>
         <div class="vcr-loading">
           <div class="vcr-screen">
             <div>▶ ${esc(label)}<span class="vcr-blink">▌</span></div>
@@ -439,6 +450,7 @@ function renderScanResults(root) {
       btn.addEventListener("click", () => {
         const r = results[Number(btn.dataset.check)];
         r.include = !r.include;
+        buzz(6);
         draw();
         root.querySelector("[data-lookup]").innerHTML = `${icons.sparkles} Look Up Details (${includedCount()})`;
       })
@@ -797,8 +809,12 @@ function renderCsvMapping(root, rows) {
         failed += failedCount || 0;
       }
       upsertTapes(created);
-      if (failed > 0) toast(`Imported ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
-      else toast(`Imported ${created.length} tapes. 📼`);
+      if (failed > 0) {
+        toast(`Imported ${created.length}, but ${failed} couldn't be saved.`, { error: true, duration: 4200 });
+      } else {
+        await tapeInsertMoment(`${created.length} tape${created.length === 1 ? "" : "s"} filed away`);
+        toast(`Imported ${created.length} tapes. 📼`);
+      }
       go("library", null, { replace: true });
     } catch (err) {
       toast(err.message, { error: true, duration: 4200 });

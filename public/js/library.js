@@ -6,6 +6,7 @@ import { esc, money, debounce, statusLabel, conditionLabel } from "./util.js";
 import { coverArt, isSealed } from "./covers.js";
 import { toast, confirmSheet, emptyState, openSheet, spinnerButtonStart, spinnerButtonStop, priceField, wirePriceFields } from "./ui.js";
 import { state, go, back, rerender, upsertTapes, removeTape } from "./app.js";
+import { tapeMascot, soldCelebration } from "./delight.js";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -137,11 +138,13 @@ function renderListContainer(container, tapes) {
     return;
   }
   if (state.tapes.length === 0) {
-    container.innerHTML = emptyState({
-      icon: icons.tape,
-      title: "No tapes yet",
-      message: "Tap the + button and scan a photo of your tapes to get started.",
-    });
+    container.innerHTML = `
+      <div class="empty fade-in">
+        <div style="margin-bottom:16px">${tapeMascot()}</div>
+        <h3>No tapes yet</h3>
+        <p>Tap the + button and scan a photo of your tapes to get started.</p>
+        <div class="blink-play">▶ INSERT TAPE</div>
+      </div>`;
     return;
   }
   if (tapes.length === 0) {
@@ -155,14 +158,14 @@ function renderListContainer(container, tapes) {
 
   if (state.library.mode === "grid") {
     container.innerHTML = `
-      <div class="cover-grid fade-in">
-        ${tapes.map(coverCell).join("")}
+      <div class="cover-grid">
+        ${tapes.map((tape, i) => coverCell(tape, i)).join("")}
       </div>
       <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>`;
   } else {
     container.innerHTML = `
-      <div class="tape-list fade-in">
-        ${tapes.map(listRow).join("")}
+      <div class="tape-list">
+        ${tapes.map((tape, i) => listRow(tape, i)).join("")}
         <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>
       </div>`;
   }
@@ -171,7 +174,7 @@ function renderListContainer(container, tapes) {
   );
 }
 
-function coverCell(tape) {
+function coverCell(tape, index = 0) {
   const status = tape.status || "available";
   const badge =
     status === "sold"
@@ -182,18 +185,18 @@ function coverCell(tape) {
           ? `<span class="cover-badge badge-keep">Keep</span>`
           : "";
   return `
-    <button class="cover-cell" data-tape="${esc(tape.id)}">
+    <button class="cover-cell" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 14)}">
       <div class="cover-art box3d"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}${badge}</div>
       <div class="cover-title">${esc(tape.title)}</div>
       <div class="cover-sub">${tape.year || ""}${tape.priceAsking != null && status !== "sold" ? `${tape.year ? " · " : ""}${money(tape.priceAsking)}` : ""}</div>
     </button>`;
 }
 
-function listRow(tape) {
+function listRow(tape, index = 0) {
   const status = tape.status || "available";
   const price = status === "sold" ? tape.priceSold ?? tape.priceAsking : tape.priceAsking;
   return `
-    <button class="tape-row" data-tape="${esc(tape.id)}">
+    <button class="tape-row" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 12)}">
       <div class="tape-thumb">${coverArt(tape)}</div>
       <div class="tape-row-main">
         <div class="tape-row-title">${esc(tape.title)}</div>
@@ -411,6 +414,7 @@ export function renderDetail(root, tapeId) {
           soldDate: new Date().toISOString().slice(0, 10),
         })
       ) {
+        await soldCelebration(root.querySelector(".detail-cover"));
         toast("Sold! 🎉");
         rerender();
       }

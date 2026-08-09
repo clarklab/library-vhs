@@ -1112,6 +1112,267 @@ textarea.big-input:focus { border-color: var(--tint); }
 .fade-in { animation: fadein 0.25s ease; }
 @keyframes fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
+/* ============================================================
+   Delight pass
+   ============================================================ */
+
+:root {
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-soft: cubic-bezier(0.34, 1.25, 0.64, 1);
+}
+
+/* ---------- 1. Tape-insert moment ---------- */
+
+.tape-moment {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0);
+  transition: background 0.25s ease;
+  pointer-events: none;
+}
+.tape-moment.run { background: rgba(0, 0, 0, 0.72); }
+.tape-moment.out { background: rgba(0, 0, 0, 0); }
+.tape-moment.out .tm-stage { opacity: 0; transform: scale(0.94); }
+.tm-stage {
+  text-align: center;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+.tm-clip {
+  height: 96px;
+  width: 180px;
+  margin: 0 auto;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+}
+.tm-cassette { width: 120px; flex: none; transform: translateY(-130px); }
+.tape-moment.run .tm-cassette { animation: tm-drop 0.9s cubic-bezier(0.45, 0, 0.2, 1) 0.1s forwards; }
+@keyframes tm-drop {
+  0% { transform: translateY(-130px); }
+  55% { transform: translateY(-6px); }
+  70% { transform: translateY(-10px); }
+  100% { transform: translateY(80px); }
+}
+.tm-slot {
+  width: 210px;
+  height: 18px;
+  margin: 0 auto;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #2a2a35, #101018);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);
+  position: relative;
+}
+.tm-mouth {
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 6px;
+  height: 5px;
+  border-radius: 3px;
+  background: #000;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.tape-moment.run .tm-mouth { animation: tm-glow 0.5s ease 0.72s; }
+@keyframes tm-glow {
+  0%, 100% { box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9); }
+  50% { box-shadow: 0 0 18px 4px rgba(56, 224, 255, 0.9); background: #38e0ff; }
+}
+.tm-label {
+  margin-top: 20px;
+  color: #38e0ff;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 14px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0;
+}
+.tape-moment.run .tm-label { animation: tm-label-in 0.4s ease 0.8s forwards; }
+@keyframes tm-label-in { to { opacity: 1; } }
+
+/* ---------- 2. SOLD stamp + confetti ---------- */
+
+.sold-stamp {
+  position: fixed;
+  z-index: 210;
+  transform: translate(-50%, -50%) rotate(-16deg) scale(2.8);
+  opacity: 0;
+  color: #ff3b30;
+  border: 5px solid #ff3b30;
+  border-radius: 10px;
+  padding: 6px 18px;
+  font-size: 42px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  font-family: "Arial Black", Impact, sans-serif;
+  background: rgba(255, 255, 255, 0.12);
+  -webkit-backdrop-filter: blur(1.5px);
+  backdrop-filter: blur(1.5px);
+  box-shadow: 0 10px 40px rgba(255, 59, 48, 0.35);
+  pointer-events: none;
+  animation: stamp-slam 0.45s cubic-bezier(0.22, 1.6, 0.36, 1) forwards,
+    stamp-fade 0.4s ease 1s forwards;
+}
+@keyframes stamp-slam {
+  to { transform: translate(-50%, -50%) rotate(-16deg) scale(1); opacity: 1; }
+}
+@keyframes stamp-fade { to { opacity: 0; transform: translate(-50%, -60%) rotate(-16deg) scale(1.05); } }
+.confetti-bit {
+  position: fixed;
+  z-index: 205;
+  font-size: 22px;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ---------- 3. Cover-grid cascade ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .cover-grid .cover-cell {
+    animation: cover-in 0.55s var(--spring) both;
+    animation-delay: calc(var(--i, 0) * 32ms);
+  }
+  @keyframes cover-in {
+    0% { opacity: 0; transform: translateY(18px) scale(0.9); }
+    70% { opacity: 1; transform: translateY(-2px) scale(1.015); }
+    100% { opacity: 1; transform: none; }
+  }
+  .tape-list .tape-row {
+    animation: row-in 0.4s var(--spring-soft) both;
+    animation-delay: calc(var(--i, 0) * 24ms);
+  }
+  @keyframes row-in {
+    from { opacity: 0; transform: translateX(14px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+/* ---------- 4. Empty-state mascot ---------- */
+
+.mascot { width: 110px; margin: 0 auto; display: block; }
+.empty .mascot { animation: mascot-bob 2.8s ease-in-out infinite; }
+.mascot-reel { animation: mascot-spin 2.4s linear infinite; }
+@keyframes mascot-bob {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-9px) rotate(1.5deg); }
+}
+@keyframes mascot-spin { to { transform: rotate(360deg); } }
+.blink-play {
+  margin-top: 14px;
+  color: #38e0ff;
+  font-family: "SF Mono", ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  animation: vcrblink 1.2s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .empty .mascot, .mascot-reel, .blink-play { animation: none; }
+}
+
+/* ---------- 5. Photo scanning viewfinder ---------- */
+
+.photo-preview.scanning img { opacity: 0.6; }
+.vf-corner {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  border: 3.5px solid #38e0ff;
+  z-index: 3;
+  filter: drop-shadow(0 0 6px rgba(56, 224, 255, 0.8));
+}
+.vf-corner.tl { top: 10px; left: 10px; border-right: 0; border-bottom: 0; border-radius: 8px 0 0 0; }
+.vf-corner.tr { top: 10px; right: 10px; border-left: 0; border-bottom: 0; border-radius: 0 8px 0 0; }
+.vf-corner.bl { bottom: 10px; left: 10px; border-right: 0; border-top: 0; border-radius: 0 0 0 8px; }
+.vf-corner.br { bottom: 10px; right: 10px; border-left: 0; border-top: 0; border-radius: 0 0 8px 0; }
+.scan-beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -64px;
+  height: 64px;
+  z-index: 2;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    rgba(56, 224, 255, 0.25) 40%,
+    rgba(56, 224, 255, 0.85) 50%,
+    rgba(56, 224, 255, 0.25) 60%,
+    transparent
+  );
+  mix-blend-mode: screen;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .scan-beam { animation: beam-sweep 1.7s ease-in-out infinite alternate; }
+  @keyframes beam-sweep {
+    from { top: -64px; }
+    to { top: 100%; }
+  }
+}
+
+/* ---------- 6. Stats bars grow in ---------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  .bar-row .bar-fill {
+    transform-origin: left center;
+    animation: bar-grow 0.6s var(--spring-soft) both;
+    animation-delay: calc(var(--i, 0) * 70ms + 150ms);
+  }
+  @keyframes bar-grow {
+    from { transform: scaleX(0); }
+    to { transform: scaleX(1); }
+  }
+  .stat-grid .stat-card {
+    animation: cover-in 0.5s var(--spring) both;
+    animation-delay: calc(var(--i, 0) * 60ms);
+  }
+}
+
+/* ---------- Chunky pass ---------- */
+
+.btn {
+  padding: 17px;
+  border-radius: 15px;
+  transition: transform 0.35s var(--spring), opacity 0.15s ease;
+}
+.btn:active { transform: scale(0.955); transition-duration: 0.06s; }
+.chip { padding: 8px 17px; font-size: 15px; transition: transform 0.3s var(--spring), background 0.15s ease; }
+.chip:active { transform: scale(0.93); opacity: 1; }
+.action-item { padding: 18px 16px; border-radius: 16px; transition: transform 0.3s var(--spring), background 0.15s ease; }
+.action-item:active { transform: scale(0.97); }
+.action-icon { width: 48px; height: 48px; border-radius: 13px; }
+.action-icon svg { width: 26px; height: 26px; }
+.tab-add-btn {
+  width: 54px;
+  height: 54px;
+  margin-top: -18px;
+  box-shadow: 0 6px 18px rgba(0, 122, 255, 0.5);
+  transition: transform 0.35s var(--spring);
+}
+.tab-add-btn svg { width: 27px; height: 27px; }
+.tab-add-btn:active { transform: scale(0.88) rotate(90deg); }
+.row { min-height: 50px; }
+.text-field { padding: 16px; border-radius: 14px; }
+.segmented button { padding: 7px 10px; font-size: 13.5px; }
+.cover-cell { transition: transform 0.35s var(--spring); }
+.cover-cell:active { transform: scale(0.95); }
+.cover-cell:active .cover-art { transform: none; }
+.toast { transition: transform 0.45s var(--spring); }
+.searchbar { padding: 10px 12px; border-radius: 12px; }
+.photo-drop { border-radius: 18px; transition: transform 0.3s var(--spring), background 0.15s ease; }
+.photo-drop:active { transform: scale(0.98); }
+.scan-check { transition: transform 0.3s var(--spring), background 0.15s ease, border-color 0.15s ease; }
+.scan-check:active { transform: scale(0.85); }
+.scan-check.checked { animation: check-pop 0.35s var(--spring); }
+@keyframes check-pop {
+  0% { transform: scale(0.7); }
+  60% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
 .text-secondary { color: var(--label-secondary); }
 .text-small { font-size: 13px; }
 .mt-8 { margin-top: 8px; }

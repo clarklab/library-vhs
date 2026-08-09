@@ -6,6 +6,7 @@ import { esc, money, toCsv, downloadFile, statusLabel, conditionLabel } from "./
 import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut, upsertTapes } from "./app.js";
+import { runCountUps } from "./delight.js";
 
 // ---------- Stats ----------
 
@@ -39,25 +40,25 @@ export function renderStats(root) {
         tapes.length === 0
           ? emptyState({ icon: icons.stats, title: "Nothing to count yet", message: "Add some tapes and your collection stats will show up here." })
           : `
-      <div class="stat-grid fade-in">
-        <div class="stat-card">
+      <div class="stat-grid">
+        <div class="stat-card" style="--i:0">
           <div class="stat-label">In Collection</div>
-          <div class="stat-value">${active.length}</div>
+          <div class="stat-value" data-count="${active.length}">${active.length}</div>
           <div class="stat-sub">${sold.length} sold all-time</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
           <div class="stat-label">Asking Value</div>
-          <div class="stat-value">${money(askingTotal) || "$0"}</div>
+          <div class="stat-value" data-count="${askingTotal}" data-money>${money(askingTotal) || "$0"}</div>
           <div class="stat-sub">across priced tapes</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:2">
           <div class="stat-label">Invested</div>
-          <div class="stat-value">${money(invested) || "$0"}</div>
+          <div class="stat-value" data-count="${invested}" data-money>${money(invested) || "$0"}</div>
           <div class="stat-sub">total paid</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:3">
           <div class="stat-label">Sales Revenue</div>
-          <div class="stat-value">${money(revenue) || "$0"}</div>
+          <div class="stat-value" data-count="${revenue}" data-money>${money(revenue) || "$0"}</div>
           <div class="stat-sub">${revenue - soldCost >= 0 ? "+" : ""}${money(revenue - soldCost) || "$0"} profit</div>
         </div>
       </div>
@@ -68,6 +69,8 @@ export function renderStats(root) {
       `
       }
     </div>`;
+
+  runCountUps(root);
 }
 
 function tally(list, keyFn) {
@@ -90,10 +93,10 @@ function barSection(title, entries, color, sortByName = false) {
       <div class="group">
         ${shown
           .map(
-            ([name, count]) => `
+            ([name, count], i) => `
           <div class="bar-row">
             <div class="bar-name">${esc(name)}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${Math.round((count / max) * 100)}%; background:${color}"></div></div>
+            <div class="bar-track"><div class="bar-fill" style="--i:${i}; width:${Math.round((count / max) * 100)}%; background:${color}"></div></div>
             <div class="bar-count">${count}</div>
           </div>`
           )
@@ -121,15 +124,15 @@ export function renderSales(root) {
         sold.length === 0
           ? emptyState({ icon: icons.sales, title: "No sales yet", message: "When you mark tapes as sold, they'll show up here with your running profit." })
           : `
-      <div class="stat-grid fade-in">
-        <div class="stat-card">
+      <div class="stat-grid">
+        <div class="stat-card" style="--i:0">
           <div class="stat-label">Revenue</div>
-          <div class="stat-value">${money(revenue) || "$0"}</div>
+          <div class="stat-value" data-count="${revenue}" data-money>${money(revenue) || "$0"}</div>
           <div class="stat-sub">${sold.length} tape${sold.length === 1 ? "" : "s"} sold</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
           <div class="stat-label">Profit</div>
-          <div class="stat-value" style="color:${revenue - cost >= 0 ? "var(--green)" : "var(--red)"}">${money(revenue - cost) || "$0"}</div>
+          <div class="stat-value" style="color:${revenue - cost >= 0 ? "var(--green)" : "var(--red)"}" data-count="${revenue - cost}" data-money>${money(revenue - cost) || "$0"}</div>
           <div class="stat-sub">after ${money(cost) || "$0"} cost</div>
         </div>
       </div>
@@ -159,6 +162,7 @@ export function renderSales(root) {
   root.querySelectorAll("[data-tape]").forEach((el) =>
     el.addEventListener("click", () => go("detail", el.dataset.tape))
   );
+  runCountUps(root);
 }
 
 // ---------- Settings ----------
