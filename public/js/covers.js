@@ -121,12 +121,18 @@ export function isSealed(tape) {
  */
 const SEAL_GLINT = `<span class="seal-glint" aria-hidden="true"></span>`;
 
-/** Cover markup: real poster <img> or generated SVG, plus seal glint when sealed. */
+/**
+ * Cover markup: real poster <img> or generated SVG, plus seal glint when
+ * sealed — all inside a single .box-front layer that owns the clipping.
+ * Poster scans from OMDb/Amazon often carry baked-in white margins; on load
+ * each poster is pixel-sampled and any detected margins are cropped off
+ * (see __vhsTrimPoster). A small CSS bleed catches what sampling can't.
+ */
 export function coverArt(tape) {
   const art = tape.posterUrl
-    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" onerror="this.outerHTML=window.__vhsFallbackCover(this.dataset.t)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
+    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" crossorigin="anonymous" onload="window.__vhsTrimPoster(this)" onerror="window.__vhsPosterError(this)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
     : generatedCover(tape);
-  return isSealed(tape) ? art + SEAL_GLINT : art;
+  return `<span class="box-front">${isSealed(tape) ? art + SEAL_GLINT : art}</span>`;
 }
 
 // Fallback hook for broken poster URLs (referenced from the onerror attribute).
@@ -135,5 +141,110 @@ window.__vhsFallbackCover = (json) => {
     return generatedCover(JSON.parse(json));
   } catch {
     return generatedCover({ title: "?" });
+  }
+};
+
+// Poster hosts without CORS headers make a crossorigin <img> fail outright:
+// retry plainly (poster shows, margins just can't be sampled) before giving
+// up and drawing a generated cover.
+window.__vhsPosterError = (img) => {
+  if (img.crossOrigin && img.dataset.retried !== "1") {
+    img.dataset.retried = "1";
+    const src = img.src;
+    img.removeAttribute("crossorigin");
+    img.src = "";
+    img.src = src;
+    return;
+  }
+  img.outerHTML = window.__vhsFallbackCover(img.dataset.t);
+};
+
+/**
+ * Trim baked-in scan borders. Downscales the poster to a small probe canvas,
+ * walks inward from each edge while rows/columns are near-uniform white, and
+ * if it finds real margins redraws the poster without them (cached per URL).
+ * Runs only when CORS allows pixel reads; posters with clean edges (or
+ * white-by-design art, which stays white past the search cap) are untouched.
+ */
+const trimCache = new Map(); // src -> trimmed data URL, or "" for "leave as-is"
+const TRIM_CACHE_MAX = 200;
+
+function rememberTrim(src, val) {
+  if (trimCache.size >= TRIM_CACHE_MAX) trimCache.delete(trimCache.keys().next().value);
+  trimCache.set(src, val);
+}
+
+window.__vhsTrimPoster = (img) => {
+  const src = img.currentSrc || img.src;
+  if (!src || src.startsWith("data:")) return;
+  const cached = trimCache.get(src);
+  if (cached !== undefined) {
+    if (cached) img.src = cached;
+    return;
+  }
+  try {
+    const w = img.naturalWidth;
+    const h = img.naturalHeight;
+    if (!w || !h) return;
+
+    const PW = 48, PH = 72;      // probe resolution
+    const WHITE = 224;           // per-pixel "white enough" luminance
+    const ROW_FRAC = 0.94;       // fraction of a row/col that must be white
+    const CAP = 0.1;             // deepest margin we'll believe (10%)
+    const PAD = 0.008;           // shave the anti-aliased boundary line too
+
+    const probe = document.createElement("canvas");
+    probe.width = PW;
+    probe.height = PH;
+    const pctx = probe.getContext("2d", { willReadFrequently: true });
+    pctx.drawImage(img, 0, 0, PW, PH);
+    const d = pctx.getImageData(0, 0, PW, PH).data; // throws if CORS-tainted
+    const lum = (x, y) => {
+      const i = (y * PW + x) * 4;
+      return 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    };
+    const rowWhite = (y) => {
+      let n = 0;
+      for (let x = 0; x < PW; x++) if (lum(x, y) > WHITE) n++;
+      return n / PW >= ROW_FRAC;
+    };
+    const colWhite = (x) => {
+      let n = 0;
+      for (let y = 0; y < PH; y++) if (lum(x, y) > WHITE) n++;
+      return n / PH >= ROW_FRAC;
+    };
+    // Walk in from an edge; hitting the cap while still white means the art
+    // itself is white (minimalist poster) — leave that side alone.
+    const run = (limit, isWhite) => {
+      let n = 0;
+      while (n < limit && isWhite(n)) n++;
+      return n >= limit ? 0 : n;
+    };
+    const fT = run(Math.floor(PH * CAP), (n) => rowWhite(n)) / PH;
+    const fB = run(Math.floor(PH * CAP), (n) => rowWhite(PH - 1 - n)) / PH;
+    const fL = run(Math.floor(PW * CAP), (n) => colWhite(n)) / PW;
+    const fR = run(Math.floor(PW * CAP), (n) => colWhite(PW - 1 - n)) / PW;
+
+    if (fT + fB + fL + fR < 0.01) {
+      rememberTrim(src, "");
+      return;
+    }
+    const top = fT ? fT + PAD : 0;
+    const bottom = fB ? fB + PAD : 0;
+    const left = fL ? fL + PAD : 0;
+    const right = fR ? fR + PAD : 0;
+    const sx = Math.round(w * left);
+    const sy = Math.round(h * top);
+    const sw = Math.round(w * (1 - left - right));
+    const sh = Math.round(h * (1 - top - bottom));
+    const out = document.createElement("canvas");
+    out.width = sw;
+    out.height = sh;
+    out.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+    const url = out.toDataURL("image/jpeg", 0.92);
+    rememberTrim(src, url);
+    img.src = url;
+  } catch {
+    rememberTrim(src, ""); // CORS-tainted or decode issue — leave the poster be
   }
 };
