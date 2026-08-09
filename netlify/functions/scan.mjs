@@ -4,7 +4,8 @@ import { structured, aiErrorResponse, FriendlyError } from "../lib/ai.mjs";
 export const config = { path: "/api/scan" };
 
 const ALLOWED_MEDIA = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const MAX_IMAGE_BYTES = 4.5 * 1024 * 1024; // decoded size guard
+// Keep well under Netlify's ~6MB function payload cap (base64 adds ~33%).
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 
 const SCAN_SCHEMA = {
   type: "object",

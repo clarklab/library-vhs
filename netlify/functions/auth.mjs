@@ -39,9 +39,6 @@ async function signup(req) {
   if (password.length < 8) return errorResponse("Password must be at least 8 characters.");
 
   const users = usersStore();
-  const existing = await users.get(`email/${email}`, { type: "json" });
-  if (existing) return errorResponse("An account with that email already exists.", 409);
-
   const userId = newId();
   const user = {
     id: userId,
@@ -51,7 +48,13 @@ async function signup(req) {
     createdAt: new Date().toISOString(),
   };
   await users.setJSON(userId, user);
-  await users.setJSON(`email/${email}`, { userId });
+  // Conditional write closes the duplicate-signup race: only one concurrent
+  // request can claim the email index entry.
+  const claim = await users.setJSON(`email/${email}`, { userId }, { onlyIfNew: true });
+  if (claim?.modified === false) {
+    await users.delete(userId);
+    return errorResponse("An account with that email already exists.", 409);
+  }
 
   const token = await createSession(userId);
   return json({ token, user: publicUser(user) }, 201);
