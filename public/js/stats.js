@@ -6,6 +6,8 @@ import { esc, money, toCsv, downloadFile, statusLabel, conditionLabel } from "./
 import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut, upsertTapes } from "./app.js";
+import { runCountUps } from "./delight.js";
+import { maybeOfferInstall, isStandalone } from "./install.js";
 
 // ---------- Stats ----------
 
@@ -39,25 +41,25 @@ export function renderStats(root) {
         tapes.length === 0
           ? emptyState({ icon: icons.stats, title: "Nothing to count yet", message: "Add some tapes and your collection stats will show up here." })
           : `
-      <div class="stat-grid fade-in">
-        <div class="stat-card">
+      <div class="stat-grid">
+        <div class="stat-card" style="--i:0">
           <div class="stat-label">In Collection</div>
-          <div class="stat-value">${active.length}</div>
+          <div class="stat-value" data-count="${active.length}">${active.length}</div>
           <div class="stat-sub">${sold.length} sold all-time</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
           <div class="stat-label">Asking Value</div>
-          <div class="stat-value">${money(askingTotal) || "$0"}</div>
+          <div class="stat-value" data-count="${askingTotal}" data-money>${money(askingTotal) || "$0"}</div>
           <div class="stat-sub">across priced tapes</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:2">
           <div class="stat-label">Invested</div>
-          <div class="stat-value">${money(invested) || "$0"}</div>
+          <div class="stat-value" data-count="${invested}" data-money>${money(invested) || "$0"}</div>
           <div class="stat-sub">total paid</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:3">
           <div class="stat-label">Sales Revenue</div>
-          <div class="stat-value">${money(revenue) || "$0"}</div>
+          <div class="stat-value" data-count="${revenue}" data-money>${money(revenue) || "$0"}</div>
           <div class="stat-sub">${revenue - soldCost >= 0 ? "+" : ""}${money(revenue - soldCost) || "$0"} profit</div>
         </div>
       </div>
@@ -68,6 +70,8 @@ export function renderStats(root) {
       `
       }
     </div>`;
+
+  runCountUps(root);
 }
 
 function tally(list, keyFn) {
@@ -90,10 +94,10 @@ function barSection(title, entries, color, sortByName = false) {
       <div class="group">
         ${shown
           .map(
-            ([name, count]) => `
+            ([name, count], i) => `
           <div class="bar-row">
             <div class="bar-name">${esc(name)}</div>
-            <div class="bar-track"><div class="bar-fill" style="width:${Math.round((count / max) * 100)}%; background:${color}"></div></div>
+            <div class="bar-track"><div class="bar-fill" style="--i:${i}; width:${Math.round((count / max) * 100)}%; background:${color}"></div></div>
             <div class="bar-count">${count}</div>
           </div>`
           )
@@ -121,15 +125,15 @@ export function renderSales(root) {
         sold.length === 0
           ? emptyState({ icon: icons.sales, title: "No sales yet", message: "When you mark tapes as sold, they'll show up here with your running profit." })
           : `
-      <div class="stat-grid fade-in">
-        <div class="stat-card">
+      <div class="stat-grid">
+        <div class="stat-card" style="--i:0">
           <div class="stat-label">Revenue</div>
-          <div class="stat-value">${money(revenue) || "$0"}</div>
+          <div class="stat-value" data-count="${revenue}" data-money>${money(revenue) || "$0"}</div>
           <div class="stat-sub">${sold.length} tape${sold.length === 1 ? "" : "s"} sold</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="--i:1">
           <div class="stat-label">Profit</div>
-          <div class="stat-value" style="color:${revenue - cost >= 0 ? "var(--green)" : "var(--red)"}">${money(revenue - cost) || "$0"}</div>
+          <div class="stat-value" style="color:${revenue - cost >= 0 ? "var(--green)" : "var(--red)"}" data-count="${revenue - cost}" data-money>${money(revenue - cost) || "$0"}</div>
           <div class="stat-sub">after ${money(cost) || "$0"} cost</div>
         </div>
       </div>
@@ -159,6 +163,7 @@ export function renderSales(root) {
   root.querySelectorAll("[data-tape]").forEach((el) =>
     el.addEventListener("click", () => go("detail", el.dataset.tape))
   );
+  runCountUps(root);
 }
 
 // ---------- Settings ----------
@@ -196,6 +201,14 @@ export function renderSettings(root) {
           </button>
         </div>
         <p class="hint" style="padding-left:0">Only needed if the site doesn't have a shared key. Free at omdbapi.com.</p>
+
+        <div class="group-label" style="padding-left:0">App</div>
+        <div class="group">
+          <button class="row tappable" data-install>
+            <span class="row-label" style="color:var(--tint)">${isStandalone() ? "Installed on Home Screen" : "Add to Home Screen"}</span>
+            <span class="row-value">${isStandalone() ? "✓" : "📲"}</span>
+          </button>
+        </div>
 
         <div class="group-label" style="padding-left:0">Your Data</div>
         <div class="group">
@@ -309,21 +322,27 @@ export function renderSettings(root) {
     }
   });
 
+  root.querySelector("[data-install]").addEventListener("click", () => maybeOfferInstall({ manual: true }));
+
   root.querySelector("[data-export]").addEventListener("click", () => {
     if (state.tapes.length === 0) {
       toast("Nothing to export yet.", { error: true });
       return;
     }
     const headers = [
-      "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Edition",
-      "Condition", "Status", "Price Paid", "Asking Price", "Sold Price", "Sold Date",
-      "Location", "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
+      "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Studio/Label",
+      "Edition", "Packaging", "Sealed", "Condition", "Status", "Price Paid", "Asking Price",
+      "Sold Price", "Sold Date", "Location", "Where Acquired", "Date Acquired",
+      "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
     ];
     const rows = state.tapes.map((t) => [
       t.title, t.year ?? "", t.director, (t.actors || []).join("; "), t.genre, t.runtime,
-      t.rated, t.edition, conditionLabel(t.condition) === "—" ? "" : t.condition,
+      t.rated, t.label || "", t.edition, t.packaging || "",
+      t.sealed || t.condition === "sealed" ? "yes" : "no",
+      conditionLabel(t.condition) === "—" ? "" : t.condition,
       statusLabel(t.status), t.pricePaid ?? "", t.priceAsking ?? "", t.priceSold ?? "",
-      t.soldDate ?? "", t.location, t.barcode, t.notes, t.imdbRating, t.imdbId,
+      t.soldDate ?? "", t.location, t.acquiredFrom || "", t.acquiredDate || "",
+      t.barcode, t.notes, t.imdbRating, t.imdbId,
       (t.createdAt || "").slice(0, 10),
     ]);
     downloadFile(`vhs-vault-${new Date().toISOString().slice(0, 10)}.csv`, toCsv([headers, ...rows]));

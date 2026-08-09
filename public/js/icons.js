@@ -56,6 +56,7 @@ export const icons = {
     `<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m3.5 17 5-5 3.5 3.5L16 11l4.5 4.5"/>`
   ),
   info: svg(`<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>`),
+  scrub: svg(`<path d="m7.5 9-4 3 4 3M16.5 9l4 3-4 3M10.5 12h3"/>`),
   film: svg(
     `<rect x="3" y="3.5" width="18" height="17" rx="2"/><path d="M7 3.5v17M17 3.5v17M3 8h4M3 12h4M3 16h4M17 8h4M17 12h4M17 16h4"/>`
   ),

@@ -3,9 +3,10 @@
 import { api } from "./api.js";
 import { icons } from "./icons.js";
 import { esc, money, debounce, statusLabel, conditionLabel } from "./util.js";
-import { coverArt } from "./covers.js";
-import { toast, confirmSheet, emptyState, openSheet, spinnerButtonStart, spinnerButtonStop } from "./ui.js";
+import { coverArt, isSealed } from "./covers.js";
+import { toast, confirmSheet, emptyState, openSheet, spinnerButtonStart, spinnerButtonStop, priceField, wirePriceFields } from "./ui.js";
 import { state, go, back, rerender, upsertTapes, removeTape } from "./app.js";
+import { tapeMascot, soldCelebration } from "./delight.js";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -30,7 +31,7 @@ export function filteredTapes() {
   if (query) {
     const q = query.toLowerCase();
     tapes = tapes.filter((t) =>
-      [t.title, t.director, t.genre, t.location, t.notes, ...(t.actors || []), ...(t.tags || [])]
+      [t.title, t.director, t.genre, t.location, t.notes, t.label, t.edition, ...(t.actors || []), ...(t.tags || [])]
         .join(" ")
         .toLowerCase()
         .includes(q)
@@ -137,11 +138,13 @@ function renderListContainer(container, tapes) {
     return;
   }
   if (state.tapes.length === 0) {
-    container.innerHTML = emptyState({
-      icon: icons.tape,
-      title: "No tapes yet",
-      message: "Tap the + button and scan a photo of your tapes to get started.",
-    });
+    container.innerHTML = `
+      <div class="empty fade-in">
+        <div style="margin-bottom:16px">${tapeMascot()}</div>
+        <h3>No tapes yet</h3>
+        <p>Tap the + button and scan a photo of your tapes to get started.</p>
+        <div class="blink-play">▶ INSERT TAPE</div>
+      </div>`;
     return;
   }
   if (tapes.length === 0) {
@@ -155,14 +158,14 @@ function renderListContainer(container, tapes) {
 
   if (state.library.mode === "grid") {
     container.innerHTML = `
-      <div class="cover-grid fade-in">
-        ${tapes.map(coverCell).join("")}
+      <div class="cover-grid">
+        ${tapes.map((tape, i) => coverCell(tape, i)).join("")}
       </div>
       <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>`;
   } else {
     container.innerHTML = `
-      <div class="tape-list fade-in">
-        ${tapes.map(listRow).join("")}
+      <div class="tape-list">
+        ${tapes.map((tape, i) => listRow(tape, i)).join("")}
         <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>
       </div>`;
   }
@@ -171,7 +174,7 @@ function renderListContainer(container, tapes) {
   );
 }
 
-function coverCell(tape) {
+function coverCell(tape, index = 0) {
   const status = tape.status || "available";
   const badge =
     status === "sold"
@@ -182,18 +185,18 @@ function coverCell(tape) {
           ? `<span class="cover-badge badge-keep">Keep</span>`
           : "";
   return `
-    <button class="cover-cell" data-tape="${esc(tape.id)}">
-      <div class="cover-art">${coverArt(tape)}${badge}</div>
+    <button class="cover-cell" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 14)}">
+      <div class="cover-art box3d"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}${badge}</div>
       <div class="cover-title">${esc(tape.title)}</div>
       <div class="cover-sub">${tape.year || ""}${tape.priceAsking != null && status !== "sold" ? `${tape.year ? " · " : ""}${money(tape.priceAsking)}` : ""}</div>
     </button>`;
 }
 
-function listRow(tape) {
+function listRow(tape, index = 0) {
   const status = tape.status || "available";
   const price = status === "sold" ? tape.priceSold ?? tape.priceAsking : tape.priceAsking;
   return `
-    <button class="tape-row" data-tape="${esc(tape.id)}">
+    <button class="tape-row" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 12)}">
       <div class="tape-thumb">${coverArt(tape)}</div>
       <div class="tape-row-main">
         <div class="tape-row-title">${esc(tape.title)}</div>
@@ -228,13 +231,15 @@ export function renderDetail(root, tapeId) {
       </div>
 
       <div class="detail-hero fade-in">
-        <div class="detail-cover">${coverArt(tape)}</div>
+        <div class="detail-cover box3d"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}</div>
         <div class="detail-hero-main">
           <div class="detail-title">${esc(tape.title)}</div>
           <div class="detail-sub">${[tape.year, tape.rated, tape.runtime].filter(Boolean).map(esc).join(" · ")}</div>
           <div class="pill-row">
+            ${isSealed(tape) ? `<span class="pill" style="background:rgba(52,199,89,0.18); color:var(--green)">SEALED</span>` : ""}
             ${(tape.genre || "").split(",").map((g) => g.trim()).filter(Boolean).map((g) => `<span class="pill">${esc(g)}</span>`).join("")}
             ${tape.imdbRating ? `<span class="pill">★ ${esc(tape.imdbRating)}</span>` : ""}
+            ${tape.packaging ? `<span class="pill">${esc({ slipcase: "Slipcase", bigbox: "Big Box", clamshell: "Clamshell", screener: "Screener", other: "Other pkg." }[tape.packaging] || tape.packaging)}</span>` : ""}
           </div>
           ${tape.plot ? `<div class="detail-plot">${esc(tape.plot)}</div>` : ""}
         </div>
@@ -248,7 +253,28 @@ export function renderDetail(root, tapeId) {
           ${textRow("director", "Director", tape.director)}
           ${textRow("actors", "Actors", (tape.actors || []).join(", "))}
           ${textRow("genre", "Genre", tape.genre)}
-          ${textRow("edition", "Edition / Release", tape.edition, "text", "e.g. big box, ex-rental")}
+          ${textRow("label", "Studio / Label", tape.label, "text", "e.g. Media Home Ent.")}
+          ${textRow("edition", "Edition / Release", tape.edition, "text", "e.g. director's cut, ex-rental")}
+        </div>
+
+        <div class="group-label">The Tape Itself</div>
+        <div class="group">
+          <label class="row"><span class="row-label">Factory Sealed</span>
+            <span style="flex:1"></span>
+            <span class="switch"><input type="checkbox" name="sealed" ${isSealed(tape) ? "checked" : ""} /><span class="knob"></span></span>
+          </label>
+          <label class="row"><span class="row-label">Condition</span>
+            <select name="condition">
+              <option value="">—</option>
+              ${["sealed", "mint", "good", "fair", "poor"].map((c) => `<option value="${c}" ${tape.condition === c ? "selected" : ""}>${conditionLabel(c)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="row"><span class="row-label">Packaging</span>
+            <select name="packaging">
+              ${[["", "—"], ["slipcase", "Slipcase"], ["bigbox", "Big Box"], ["clamshell", "Clamshell"], ["screener", "Screener"], ["other", "Other"]].map(([v, l]) => `<option value="${v}" ${(tape.packaging || "") === v ? "selected" : ""}>${l}</option>`).join("")}
+            </select>
+          </label>
+          ${textRow("barcode", "Barcode / UPC", tape.barcode, "numeric")}
         </div>
 
         <div class="group-label">Inventory</div>
@@ -258,17 +284,14 @@ export function renderDetail(root, tapeId) {
               ${["available", "hold", "keep", "sold"].map((s) => `<option value="${s}" ${status === s ? "selected" : ""}>${statusLabel(s)}</option>`).join("")}
             </select>
           </label>
-          <label class="row"><span class="row-label">Condition</span>
-            <select name="condition">
-              <option value="">—</option>
-              ${["sealed", "mint", "good", "fair", "poor"].map((c) => `<option value="${c}" ${tape.condition === c ? "selected" : ""}>${conditionLabel(c)}</option>`).join("")}
-            </select>
-          </label>
-          ${textRow("pricePaid", "Price Paid", tape.pricePaid ?? "", "decimal", "$")}
-          ${textRow("priceAsking", "Asking Price", tape.priceAsking ?? "", "decimal", "$")}
-          ${status === "sold" ? textRow("priceSold", "Sold For", tape.priceSold ?? "", "decimal", "$") : ""}
+          <label class="row"><span class="row-label">Price Paid</span>${priceField({ name: "pricePaid", value: tape.pricePaid ?? "" })}</label>
+          <label class="row"><span class="row-label">Asking Price</span>${priceField({ name: "priceAsking", value: tape.priceAsking ?? "" })}</label>
+          ${status === "sold" ? `<label class="row"><span class="row-label">Sold For</span>${priceField({ name: "priceSold", value: tape.priceSold ?? "" })}</label>` : ""}
           ${textRow("location", "Storage Location", tape.location, "text", "e.g. Box 3, garage shelf B")}
-          ${textRow("barcode", "Barcode / UPC", tape.barcode, "numeric")}
+          ${textRow("acquiredFrom", "Where Acquired", tape.acquiredFrom, "text", "e.g. Rose Bowl swap meet")}
+          <label class="row"><span class="row-label">Date Acquired</span>
+            <input name="acquiredDate" type="date" value="${esc(tape.acquiredDate || "")}" style="text-align:right" />
+          </label>
         </div>
 
         <div class="group-label">Notes</div>
@@ -304,17 +327,35 @@ export function renderDetail(root, tapeId) {
       director: val("director").trim(),
       actors: val("actors").split(",").map((a) => a.trim()).filter(Boolean),
       genre: val("genre").trim(),
+      label: val("label").trim(),
       edition: val("edition").trim(),
+      sealed: Boolean(form.querySelector("[name=sealed]")?.checked),
+      packaging: val("packaging"),
       status: val("status"),
       condition: val("condition"),
       pricePaid: numOrNull("pricePaid"),
       priceAsking: numOrNull("priceAsking"),
       ...(form.querySelector("[name=priceSold]") ? { priceSold: numOrNull("priceSold") } : {}),
       location: val("location").trim(),
+      acquiredFrom: val("acquiredFrom").trim(),
+      acquiredDate: val("acquiredDate"),
       barcode: val("barcode").trim(),
       notes: val("notes").trim(),
     };
   };
+
+  wirePriceFields(form);
+
+  // Flipping the Sealed switch updates the cover's shrink-wrap glint live.
+  form.querySelector("[name=sealed]")?.addEventListener("change", (event) => {
+    const coverEl = root.querySelector(".detail-cover");
+    const existing = coverEl.querySelector(".seal-glint");
+    if (event.target.checked && !existing) {
+      coverEl.insertAdjacentHTML("beforeend", `<span class="seal-glint" aria-hidden="true"></span>`);
+    } else if (!event.target.checked && existing && tape.condition !== "sealed") {
+      existing.remove();
+    }
+  });
 
   const save = async (extraPatch = {}) => {
     const patch = { ...readForm(), ...extraPatch };
@@ -353,13 +394,14 @@ export function renderDetail(root, tapeId) {
       content: `
         <div class="group">
           <label class="row"><span class="row-label">Sold For</span>
-            <input name="soldFor" inputmode="decimal" placeholder="${tape.priceAsking != null ? money(tape.priceAsking) : "$"}" />
+            ${priceField({ name: "soldFor", value: "", placeholder: tape.priceAsking != null ? String(tape.priceAsking) : "0" })}
           </label>
         </div>
         <div class="stack mt-16">
           <button class="btn" data-confirm-sold>${icons.dollar} Confirm Sale</button>
         </div>`,
     });
+    wirePriceFields(document.getElementById("sheet-root"));
     document.querySelector("[data-confirm-sold]").addEventListener("click", async () => {
       const raw = document.querySelector("[name=soldFor]").value.replace(/[$,\s]/g, "");
       const soldFor = raw === "" ? tape.priceAsking : Number(raw);
@@ -372,6 +414,7 @@ export function renderDetail(root, tapeId) {
           soldDate: new Date().toISOString().slice(0, 10),
         })
       ) {
+        await soldCelebration(root.querySelector(".detail-cover"));
         toast("Sold! 🎉");
         rerender();
       }
