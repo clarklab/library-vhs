@@ -1,0 +1,13 @@
+[build]
+  publish = "public"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
+
+# SPA fallback — API routes are declared via `config.path` inside each function,
+# so anything else falls through to the app shell.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
