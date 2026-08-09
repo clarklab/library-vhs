@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { icons } from "./icons.js";
 import { esc, resizeImage, parseBulkLine, parseCsv } from "./util.js";
-import { generatedCover } from "./covers.js";
+import { coverArt } from "./covers.js";
 import { openSheet, toast, spinnerButtonStart, spinnerButtonStop, wirePriceFields } from "./ui.js";
 import { state, go, back, upsertTapes } from "./app.js";
 import { tapeInsertMoment, buzz } from "./delight.js";
@@ -109,9 +109,8 @@ function renderReview(root, items, { source, backView }) {
   const drawCards = () => {
     cards.innerHTML = items
       .map((item, i) => {
-        const cover = item.posterUrl
-          ? `<img src="${esc(item.posterUrl)}" alt="" loading="lazy">`
-          : generatedCover(item);
+        // coverArt handles posters, the broken-poster fallback, and glint.
+        const cover = coverArt(item);
         return `
         <div class="review-card ${item.include === false ? "excluded" : ""}" data-card="${i}" style="${item.include === false ? "opacity:.45" : ""}">
           <div class="review-thumb">${cover}</div>
