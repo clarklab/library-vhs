@@ -7,6 +7,7 @@ import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut, upsertTapes } from "./app.js";
 import { runCountUps } from "./delight.js";
+import { maybeOfferInstall, isStandalone } from "./install.js";
 
 // ---------- Stats ----------
 
@@ -201,6 +202,14 @@ export function renderSettings(root) {
         </div>
         <p class="hint" style="padding-left:0">Only needed if the site doesn't have a shared key. Free at omdbapi.com.</p>
 
+        <div class="group-label" style="padding-left:0">App</div>
+        <div class="group">
+          <button class="row tappable" data-install>
+            <span class="row-label" style="color:var(--tint)">${isStandalone() ? "Installed on Home Screen" : "Add to Home Screen"}</span>
+            <span class="row-value">${isStandalone() ? "✓" : "📲"}</span>
+          </button>
+        </div>
+
         <div class="group-label" style="padding-left:0">Your Data</div>
         <div class="group">
           <button class="row tappable" data-export>
@@ -312,6 +321,8 @@ export function renderSettings(root) {
       toast(err.message, { error: true });
     }
   });
+
+  root.querySelector("[data-install]").addEventListener("click", () => maybeOfferInstall({ manual: true }));
 
   root.querySelector("[data-export]").addEventListener("click", () => {
     if (state.tapes.length === 0) {

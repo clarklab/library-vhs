@@ -8,6 +8,7 @@ import { renderLibrary, renderDetail } from "./library.js";
 import { openAddSheet, renderScan, renderAddTitle, renderBulk, renderCsv } from "./addflows.js";
 import { renderStats, renderSales, renderSettings } from "./stats.js";
 import { initTilt } from "./tilt.js";
+import { initInstall, maybeOfferInstall } from "./install.js";
 
 export const state = {
   user: null,
@@ -237,7 +238,17 @@ async function loadAndEnter() {
   } catch (err) {
     toast(err.message, { error: true });
   }
+  // Manifest shortcut ("Scan Tapes") and ?action=scan deep links.
+  const action = new URLSearchParams(location.search).get("action");
+  if (action === "scan") {
+    history.replaceState({ view: "library" }, "", "/");
+    go("scan");
+    return;
+  }
   go("library", null, { replace: true });
+  // Offer Add-to-Home-Screen once things have settled (skips if installed,
+  // recently dismissed, or the platform can't install).
+  setTimeout(() => maybeOfferInstall(), 1600);
 }
 
 window.addEventListener("vhs:signed-out", () => {
@@ -300,4 +311,5 @@ function renderOffline(err) {
 }
 
 initTilt();
+initInstall();
 boot();
