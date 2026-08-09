@@ -1,4 +1,4 @@
-import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
+import { json, errorResponse, requireAuth, readBody, getOmdbKey } from "../lib/util.mjs";
 import { structured, aiErrorResponse } from "../lib/ai.mjs";
 
 export const config = { path: "/api/enrich" };
@@ -63,7 +63,7 @@ export default async (req) => {
 
   if (cleaned.length === 0) return errorResponse("Send at least one title to enrich.");
 
-  const omdbKey = auth.user.settings?.omdbKey || process.env.OMDB_API_KEY || "";
+  const omdbKey = getOmdbKey(auth);
   const results = cleaned.map((item) => ({
     query: item,
     title: item.title,
