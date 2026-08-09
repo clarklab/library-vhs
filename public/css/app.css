@@ -1373,6 +1373,27 @@ textarea.big-input:focus { border-color: var(--tint); }
   100% { transform: scale(1); }
 }
 
+/* ---------- Poster fill guarantee ---------- */
+/* Belt-and-suspenders: any image or generated art inside a cover surface
+   always fills its box edge-to-edge, cropped from the center. */
+
+.cover-art img, .cover-art svg,
+.tape-thumb img, .tape-thumb svg,
+.review-thumb img, .review-thumb svg,
+.detail-cover img, .detail-cover svg {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center;
+}
+
+/* While a poster loads (or if its URL is dead until the fallback kicks in),
+   show a dark slab instead of a glaring white box. */
+.cover-art, .tape-thumb, .review-thumb, .detail-cover {
+  background: #26262e;
+}
+
 /* ---------- Install sheet ---------- */
 
 .install-sheet { text-align: center; padding: 4px 4px 8px; }
