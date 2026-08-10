@@ -28,7 +28,10 @@ export async function structured({ system, content, schema, maxTokens = 8000, ef
         },
         messages: [{ role: "user", content }],
       },
-      { timeout: timeoutMs, maxRetries: 1 }
+      // No SDK retries: a timed-out vision call would retry for another full
+      // timeout window and blow past the function's own limit. Fail fast with
+      // a friendly message and let the user tap retry instead.
+      { timeout: timeoutMs, maxRetries: 0 }
     );
   } catch (err) {
     if (err?.name === "APIConnectionTimeoutError") {

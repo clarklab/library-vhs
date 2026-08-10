@@ -135,11 +135,15 @@ export default async (req) => {
       }
     }
 
+    if (tapes.length > reported && reported > 0) {
+      notes = (notes ? notes + " " : "") + "More tapes were listed than counted — double-check for duplicates.";
+    }
+
     return json({
       count: tapes.length,
       reportedCount: reported,
       tapes,
-      notes,
+      notes: notes.slice(0, 600),
     });
   } catch (err) {
     if (err instanceof SyntaxError) {
