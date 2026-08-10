@@ -14,17 +14,28 @@ export const MODEL = process.env.VHS_AI_MODEL || "claude-opus-5";
  * Runs a structured-output request and returns the parsed JSON object.
  * Throws with a friendly message on refusal or truncation.
  */
-export async function structured({ system, content, schema, maxTokens = 8000, effort = "low" }) {
-  const response = await anthropic().messages.create({
-    model: MODEL,
-    max_tokens: maxTokens,
-    system,
-    output_config: {
-      effort,
-      format: { type: "json_schema", schema },
-    },
-    messages: [{ role: "user", content }],
-  });
+export async function structured({ system, content, schema, maxTokens = 8000, effort = "low", timeoutMs = 50000 }) {
+  let response;
+  try {
+    response = await anthropic().messages.create(
+      {
+        model: MODEL,
+        max_tokens: maxTokens,
+        system,
+        output_config: {
+          effort,
+          format: { type: "json_schema", schema },
+        },
+        messages: [{ role: "user", content }],
+      },
+      { timeout: timeoutMs, maxRetries: 1 }
+    );
+  } catch (err) {
+    if (err?.name === "APIConnectionTimeoutError") {
+      throw new FriendlyError("The AI is taking too long right now. Please try again in a moment.");
+    }
+    throw err;
+  }
 
   if (response.stop_reason === "refusal") {
     throw new FriendlyError("The AI declined to process this request. Try a different photo.");
