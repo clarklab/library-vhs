@@ -44,6 +44,8 @@ All endpoints are Netlify Functions with custom paths, JSON in/out, `Authorizati
 - `GET/POST /api/tapes` (POST accepts `{tapes: [...]}` batches up to 100) · `PATCH/DELETE /api/tapes/:id`
 - `POST /api/scan` — `{image: dataURL}` → `{count, tapes: [{title, year, confidence, visual, edition}], notes}`
 - `POST /api/enrich` — `{items: [{title, year}]}` (≤25) → OMDb + AI metadata per item
+- `POST /api/cover` — `{tapeId, image: dataURL}` → stores a user-shot cover in Blobs, points the tape at it (`GET /api/cover/:coverId` serves it; old upload cleaned up on replace/delete)
+- `POST /api/value` — `{title, year, edition, packaging, sealed, condition}` → AI market-value estimate `{low, high, typical, demand, factors, summary}` (the UI pairs it with an eBay sold-listings link for live comps)
 - `GET/PUT /api/settings` — per-user OMDb key
 
 ## Notes

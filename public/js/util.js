@@ -133,7 +133,7 @@ export function parseBulkLine(line) {
 }
 
 export function statusLabel(status) {
-  return { available: "For Sale", sold: "Sold", hold: "On Hold", keep: "Keeper" }[status] || "For Sale";
+  return { available: "For Sale", sold: "Sold", hold: "On Hold", keep: "Keeper" }[status] || "Keeper";
 }
 
 export function conditionLabel(condition) {

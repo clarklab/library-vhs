@@ -1,4 +1,4 @@
-import { tapesStore, json, errorResponse, requireAuth, newId, readBody } from "../lib/util.mjs";
+import { tapesStore, coversStore, json, errorResponse, requireAuth, newId, readBody } from "../lib/util.mjs";
 
 export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
 
@@ -87,7 +87,13 @@ async function updateTape(req, auth, id) {
 }
 
 async function deleteTape(auth, id) {
-  await tapesStore().delete(`${auth.userId}/${id}`);
+  const store = tapesStore();
+  const key = `${auth.userId}/${id}`;
+  const existing = await store.get(key, { type: "json" });
+  await store.delete(key);
+  // Deleting a tape also deletes its uploaded cover, if it had one.
+  const cover = String(existing?.posterUrl || "").match(/^\/api\/cover\/([a-f0-9]{32})$/);
+  if (cover) await coversStore().delete(cover[1]).catch(() => {});
   return json({ ok: true });
 }
 
@@ -120,7 +126,8 @@ function sanitizeTape(input, partial = false) {
     imdbId: (v) => str(v, 20),
     posterUrl: (v) => {
       const s = str(v, 600);
-      return /^https:\/\//.test(s) ? s : "";
+      // https for OMDb posters, /api/cover/<id> for user-uploaded covers.
+      return /^https:\/\//.test(s) || /^\/api\/cover\/[a-f0-9]{32}$/.test(s) ? s : "";
     },
     format: (v) => str(v, 40) || "VHS",
     edition: (v) => str(v, 200),
@@ -131,7 +138,9 @@ function sanitizeTape(input, partial = false) {
     acquiredFrom: (v) => str(v, 200),
     barcode: (v) => str(v, 40),
     condition: (v) => (CONDITIONS.includes(v) ? v : ""),
-    status: (v) => (STATUSES.includes(v) ? v : "available"),
+    // Tapes are NOT for sale until the owner says so — new tapes default to
+    // "keep" and get flipped to "available" deliberately.
+    status: (v) => (STATUSES.includes(v) ? v : "keep"),
     pricePaid: num,
     priceAsking: num,
     priceSold: num,

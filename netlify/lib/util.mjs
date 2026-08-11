@@ -6,6 +6,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 export const usersStore = () => getStore({ name: "users", consistency: "strong" });
 export const sessionsStore = () => getStore({ name: "sessions", consistency: "strong" });
 export const tapesStore = () => getStore({ name: "tapes", consistency: "strong" });
+export const coversStore = () => getStore({ name: "covers", consistency: "strong" });
 
 // ---------- responses ----------
 

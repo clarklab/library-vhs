@@ -63,6 +63,8 @@ export const api = {
 
   scanPhoto: (imageDataUrl) => request("POST", "/api/scan", { image: imageDataUrl }),
   enrich: (items) => request("POST", "/api/enrich", { items }),
+  uploadCover: (tapeId, imageDataUrl) => request("POST", "/api/cover", { tapeId, image: imageDataUrl }),
+  valueEstimate: (tape) => request("POST", "/api/value", tape),
 
   getSettings: () => request("GET", "/api/settings"),
   saveSettings: (settings) => request("PUT", "/api/settings", settings),
