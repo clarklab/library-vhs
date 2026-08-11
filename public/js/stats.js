@@ -2,7 +2,8 @@
 
 import { api } from "./api.js";
 import { icons } from "./icons.js";
-import { esc, money, toCsv, downloadFile, statusLabel, conditionLabel } from "./util.js";
+import { esc, money, statusLabel, conditionLabel } from "./util.js";
+import { exportCsv, exportXls } from "./exporter.js";
 import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut, upsertTapes } from "./app.js";
@@ -212,8 +213,12 @@ export function renderSettings(root) {
 
         <div class="group-label" style="padding-left:0">Your Data</div>
         <div class="group">
-          <button class="row tappable" data-export>
+          <button class="row tappable" data-export-csv>
             <span class="row-label" style="color:var(--tint)">Export Library as CSV</span>
+            <span class="row-value">${state.tapes.length} tapes</span>
+          </button>
+          <button class="row tappable" data-export-xls>
+            <span class="row-label" style="color:var(--tint)">Export Library as Excel (.xls)</span>
             <span class="row-value">${state.tapes.length} tapes</span>
           </button>
         </div>
@@ -324,30 +329,16 @@ export function renderSettings(root) {
 
   root.querySelector("[data-install]").addEventListener("click", () => maybeOfferInstall({ manual: true }));
 
-  root.querySelector("[data-export]").addEventListener("click", () => {
+  const guardedExport = (fn, label) => () => {
     if (state.tapes.length === 0) {
       toast("Nothing to export yet.", { error: true });
       return;
     }
-    const headers = [
-      "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Studio/Label",
-      "Edition", "Packaging", "Sealed", "Condition", "Status", "Price Paid", "Asking Price",
-      "Sold Price", "Sold Date", "Location", "Where Acquired", "Date Acquired",
-      "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
-    ];
-    const rows = state.tapes.map((t) => [
-      t.title, t.year ?? "", t.director, (t.actors || []).join("; "), t.genre, t.runtime,
-      t.rated, t.label || "", t.edition, t.packaging || "",
-      t.sealed || t.condition === "sealed" ? "yes" : "no",
-      conditionLabel(t.condition) === "—" ? "" : t.condition,
-      statusLabel(t.status), t.pricePaid ?? "", t.priceAsking ?? "", t.priceSold ?? "",
-      t.soldDate ?? "", t.location, t.acquiredFrom || "", t.acquiredDate || "",
-      t.barcode, t.notes, t.imdbRating, t.imdbId,
-      (t.createdAt || "").slice(0, 10),
-    ]);
-    downloadFile(`vhs-vault-${new Date().toISOString().slice(0, 10)}.csv`, toCsv([headers, ...rows]));
-    toast("CSV downloaded.");
-  });
+    fn(state.tapes);
+    toast(`${label} downloaded.`);
+  };
+  root.querySelector("[data-export-csv]").addEventListener("click", guardedExport(exportCsv, "CSV"));
+  root.querySelector("[data-export-xls]").addEventListener("click", guardedExport(exportXls, "Excel file"));
 
   root.querySelector("[data-signout]").addEventListener("click", async () => {
     const yes = await confirmSheet({

@@ -26,12 +26,14 @@ const app = () => document.getElementById("app");
 const TAB_VIEWS = ["library", "stats", "sales", "settings"];
 
 export function go(view, arg = null, { replace = false } = {}) {
+  const fromView = state.view;
+  const fromArg = state.viewArg;
   state.view = view;
   state.viewArg = arg;
   const entry = { view, arg };
   if (replace) history.replaceState(entry, "");
   else history.pushState(entry, "");
-  render();
+  renderWithTransition(fromView, fromArg);
 }
 
 export function back() {
@@ -40,14 +42,52 @@ export function back() {
 
 window.addEventListener("popstate", (event) => {
   const entry = event.state;
+  const fromView = state.view;
+  const fromArg = state.viewArg;
   if (state.user) {
     state.view = entry?.view && entry.view !== "auth" ? entry.view : "library";
     state.viewArg = entry?.arg ?? null;
   } else {
     state.view = "auth";
   }
-  render();
+  renderWithTransition(fromView, fromArg);
 });
+
+/**
+ * Detail opens/closes with a shared-element transition: the tapped cover
+ * morphs into the detail hero (and back) while the detail screen slides up
+ * like a sheet. Everything else renders plainly.
+ */
+function renderWithTransition(fromView, fromArg) {
+  const entering = state.view === "detail" && fromView !== "detail";
+  const leaving = fromView === "detail" && state.view !== "detail";
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  if (!document.startViewTransition || reduceMotion || (!entering && !leaving)) {
+    render();
+    return;
+  }
+
+  // Entering: tag the tapped cover so the browser pairs it with the detail
+  // hero (which carries the same view-transition-name in its markup).
+  const sourceCover = entering
+    ? document.querySelector(`[data-tape="${CSS.escape(state.viewArg ?? "")}"] .cover-art, [data-tape="${CSS.escape(state.viewArg ?? "")}"] .tape-thumb`)
+    : null;
+  if (sourceCover) sourceCover.style.viewTransitionName = "tape-poster";
+
+  let destCover = null;
+  const transition = document.startViewTransition(() => {
+    render();
+    if (leaving && fromArg) {
+      // Returning: pair the detail hero we just left with its library cell.
+      destCover = document.querySelector(`[data-tape="${CSS.escape(fromArg)}"] .cover-art, [data-tape="${CSS.escape(fromArg)}"] .tape-thumb`);
+      if (destCover) destCover.style.viewTransitionName = "tape-poster";
+    }
+  });
+  transition.finished.finally(() => {
+    if (destCover) destCover.style.viewTransitionName = "";
+  });
+}
 
 // ---------- data ----------
 

@@ -215,7 +215,7 @@ function renderReview(root, items, { source, backView }) {
         pricePaid: item.pricePaid ?? null,
         priceAsking: item.priceAsking ?? null,
         location,
-        status: "available",
+        status: "keep", // not for sale until the owner flips it
         source,
       }));
       const created = [];
@@ -746,7 +746,8 @@ function renderCsvMapping(root, rows) {
             if (Number.isFinite(n)) item[field] = n;
           } else if (field === "status") {
             const v = value.toLowerCase();
-            item.status = ["sold", "hold", "keep"].includes(v) ? v : "available";
+            const statusMap = { sold: "sold", hold: "hold", "on hold": "hold", keep: "keep", keeper: "keep", available: "available", "for sale": "available" };
+            item.status = statusMap[v] || "keep";
           } else if (field === "condition") {
             const v = value.toLowerCase();
             if (["sealed", "mint", "good", "fair", "poor"].includes(v)) item.condition = v;

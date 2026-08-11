@@ -2,11 +2,12 @@
 
 import { api } from "./api.js";
 import { icons } from "./icons.js";
-import { esc, money, debounce, statusLabel, conditionLabel } from "./util.js";
+import { esc, money, debounce, statusLabel, conditionLabel, resizeImage } from "./util.js";
 import { coverArt, isSealed } from "./covers.js";
 import { toast, confirmSheet, emptyState, openSheet, spinnerButtonStart, spinnerButtonStop, priceField, wirePriceFields } from "./ui.js";
 import { state, go, back, rerender, upsertTapes, removeTape } from "./app.js";
 import { tapeMascot, soldCelebration } from "./delight.js";
+import { exportCsv, exportXls } from "./exporter.js";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -27,7 +28,7 @@ const SORTS = [
 export function filteredTapes() {
   const { query, filter, sort } = state.library;
   let tapes = [...state.tapes];
-  if (filter !== "all") tapes = tapes.filter((t) => (t.status || "available") === filter);
+  if (filter !== "all") tapes = tapes.filter((t) => (t.status || "keep") === filter);
   if (query) {
     const q = query.toLowerCase();
     tapes = tapes.filter((t) =>
@@ -54,24 +55,19 @@ export function renderLibrary(root) {
 
   root.innerHTML = `
     <div class="screen">
-      <div class="navbar">
-        <div class="navbar-inner">
-          <span></span>
-          <div class="nav-title">Library</div>
-          <button class="nav-btn" data-sort aria-label="Sort">${icons.sortArrows}</button>
-        </div>
-      </div>
-      <h1 class="large-title">Library</h1>
+      <h1 class="large-title" style="padding-top:18px">Library</h1>
       <div class="section-pad" style="padding-top:4px">
-        <div style="display:flex; gap:10px; align-items:center;">
-          <div class="searchbar" style="flex:1">
+        <div class="view-options">
+          <div class="searchbar">
             ${icons.search}
-            <input type="search" placeholder="Search titles, directors, boxes…" value="${esc(lib.query)}" data-search autocapitalize="off" />
+            <input type="search" placeholder="Search tapes…" value="${esc(lib.query)}" data-search autocapitalize="off" />
           </div>
           <div class="segmented" style="flex:none">
             <button data-mode="grid" class="${lib.mode === "grid" ? "active" : ""}" aria-label="Cover view">${icons.grid}</button>
             <button data-mode="list" class="${lib.mode === "list" ? "active" : ""}" aria-label="List view">${icons.rows}</button>
+            <button data-mode="sheet" class="${lib.mode === "sheet" ? "active" : ""}" aria-label="Spreadsheet view">${icons.table}</button>
           </div>
+          <button class="sort-btn" data-sort aria-label="Sort">${icons.sortArrows}</button>
         </div>
       </div>
       <div class="chips" style="margin-top:6px">
@@ -128,7 +124,7 @@ export function renderLibrary(root) {
 
 function countFor(filterId) {
   if (filterId === "all") return state.tapes.length ? ` ${state.tapes.length}` : "";
-  const n = state.tapes.filter((t) => (t.status || "available") === filterId).length;
+  const n = state.tapes.filter((t) => (t.status || "keep") === filterId).length;
   return n ? ` ${n}` : "";
 }
 
@@ -162,6 +158,9 @@ function renderListContainer(container, tapes) {
         ${tapes.map((tape, i) => coverCell(tape, i)).join("")}
       </div>
       <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>`;
+  } else if (state.library.mode === "sheet") {
+    renderSheetView(container, tapes);
+    return; // sheet wires its own handlers (row taps are on the title cell only)
   } else {
     container.innerHTML = `
       <div class="tape-list">
@@ -174,8 +173,95 @@ function renderListContainer(container, tapes) {
   );
 }
 
+// ---------- spreadsheet view ----------
+
+const SHEET_STATUS = [["keep", "Keeper"], ["available", "For Sale"], ["hold", "On Hold"], ["sold", "Sold"]];
+const SHEET_CONDITIONS = [["", "—"], ["sealed", "Sealed"], ["mint", "Mint"], ["good", "Good"], ["fair", "Fair"], ["poor", "Poor"]];
+
+function renderSheetView(container, tapes) {
+  container.innerHTML = `
+    <div class="sheet-view">
+      <div class="sheet-tools">
+        <span class="sheet-count">${tapes.length} tape${tapes.length === 1 ? "" : "s"} · edits save automatically</span>
+        <span style="flex:1"></span>
+        <button class="chip" data-sheet-csv>${icons.fileCsv} CSV</button>
+        <button class="chip" data-sheet-xls>${icons.export} Excel</button>
+      </div>
+      <div class="sheet-scroll">
+        <table class="sheet-table">
+          <thead>
+            <tr>
+              <th class="col-title">Title</th><th>Year</th><th>Status</th><th>Condition</th>
+              <th>Paid</th><th>Asking</th><th>Sold</th><th>Location</th><th>Edition</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tapes.map((t) => sheetRow(t)).join("")}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  container.querySelectorAll("[data-open]").forEach((el) =>
+    el.addEventListener("click", () => go("detail", el.dataset.open))
+  );
+  container.querySelector("[data-sheet-csv]").addEventListener("click", () => {
+    exportCsv(tapes);
+    toast("CSV downloaded.");
+  });
+  container.querySelector("[data-sheet-xls]").addEventListener("click", () => {
+    exportXls(tapes);
+    toast("Excel file downloaded.");
+  });
+
+  // Inline edits: every cell change PATCHes just that field, then flashes.
+  container.querySelectorAll("[data-field]").forEach((el) => {
+    el.addEventListener("change", async () => {
+      const row = el.closest("tr");
+      const id = row.dataset.row;
+      const field = el.dataset.field;
+      let value = el.value;
+      if (["year", "pricePaid", "priceAsking", "priceSold"].includes(field)) {
+        const n = Number(String(value).replace(/[$,\s]/g, ""));
+        value = value.trim() === "" ? null : Number.isFinite(n) ? n : null;
+      }
+      try {
+        const patch = { [field]: value };
+        if (field === "status" && value === "sold") {
+          const tape = state.tapes.find((t) => t.id === id);
+          if (tape && !tape.soldDate) patch.soldDate = new Date().toISOString().slice(0, 10);
+        }
+        const { tape: updated } = await api.updateTape(id, patch);
+        upsertTapes([updated]);
+        el.classList.remove("cell-saved");
+        void el.offsetWidth; // restart the flash animation
+        el.classList.add("cell-saved");
+      } catch (err) {
+        toast(err.message, { error: true });
+      }
+    });
+  });
+}
+
+function sheetRow(t) {
+  const priceInput = (field, value) =>
+    `<td class="num"><input data-field="${field}" value="${value ?? ""}" inputmode="decimal" placeholder="—" /></td>`;
+  return `
+    <tr data-row="${esc(t.id)}">
+      <td class="col-title"><button data-open="${esc(t.id)}" title="Open details">${esc(t.title)}${t.sealed || t.condition === "sealed" ? " 🔒" : ""}</button></td>
+      <td class="num"><input data-field="year" value="${t.year ?? ""}" inputmode="numeric" placeholder="—" /></td>
+      <td><select data-field="status">${SHEET_STATUS.map(([v, l]) => `<option value="${v}" ${(t.status || "keep") === v ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+      <td><select data-field="condition">${SHEET_CONDITIONS.map(([v, l]) => `<option value="${v}" ${(t.condition || "") === v ? "selected" : ""}>${l}</option>`).join("")}</select></td>
+      ${priceInput("pricePaid", t.pricePaid)}
+      ${priceInput("priceAsking", t.priceAsking)}
+      ${priceInput("priceSold", t.priceSold)}
+      <td><input data-field="location" value="${esc(t.location || "")}" placeholder="—" /></td>
+      <td><input data-field="edition" value="${esc(t.edition || "")}" placeholder="—" /></td>
+    </tr>`;
+}
+
 function coverCell(tape, index = 0) {
-  const status = tape.status || "available";
+  const status = tape.status || "keep";
   const badge =
     status === "sold"
       ? `<span class="cover-badge badge-sold">Sold</span>`
@@ -193,7 +279,7 @@ function coverCell(tape, index = 0) {
 }
 
 function listRow(tape, index = 0) {
-  const status = tape.status || "available";
+  const status = tape.status || "keep";
   const price = status === "sold" ? tape.priceSold ?? tape.priceAsking : tape.priceAsking;
   return `
     <button class="tape-row" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 12)}">
@@ -218,10 +304,10 @@ export function renderDetail(root, tapeId) {
     go("library", null, { replace: true });
     return;
   }
-  const status = tape.status || "available";
+  const status = tape.status || "keep";
 
   root.innerHTML = `
-    <div class="screen no-tabs">
+    <div class="screen no-tabs detail-screen" style="view-transition-name: detail-screen">
       <div class="navbar">
         <div class="navbar-inner">
           <button class="nav-btn" data-back>${icons.chevronLeft}<span>Library</span></button>
@@ -231,7 +317,11 @@ export function renderDetail(root, tapeId) {
       </div>
 
       <div class="detail-hero fade-in">
-        <div class="detail-cover box3d"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}</div>
+        <div class="detail-cover-wrap">
+          <div class="detail-cover box3d" style="view-transition-name: tape-poster"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}</div>
+          <button class="cover-edit" data-change-cover aria-label="Upload a new cover">${icons.camera}</button>
+          <input type="file" accept="image/*" data-cover-file hidden />
+        </div>
         <div class="detail-hero-main">
           <div class="detail-title">${esc(tape.title)}</div>
           <div class="detail-sub">${[tape.year, tape.rated, tape.runtime].filter(Boolean).map(esc).join(" · ")}</div>
@@ -303,6 +393,7 @@ export function renderDetail(root, tapeId) {
 
         <div class="stack mt-24">
           ${status !== "sold" ? `<button type="button" class="btn tinted" data-marksold>${icons.dollar} Mark as Sold</button>` : ""}
+          <button type="button" class="btn tinted" data-value>${icons.stats} Check Market Value</button>
           <button type="button" class="btn tinted" data-relookup>${icons.sparkles} Refresh Movie Details</button>
           <button type="button" class="btn destructive" data-delete>Delete Tape</button>
         </div>
@@ -426,13 +517,79 @@ export function renderDetail(root, tapeId) {
     const newStatus = event.target.value;
     if (newStatus === "sold" && tape.status !== "sold") {
       // Route through the sold sheet so priceSold/soldDate get captured.
-      openSoldSheet({ onCancel: () => (statusSelect.value = tape.status || "available") });
+      openSoldSheet({ onCancel: () => (statusSelect.value = tape.status || "keep") });
     } else if (tape.status === "sold" && newStatus !== "sold") {
       if (await save()) rerender();
     }
   });
 
   root.querySelector("[data-marksold]")?.addEventListener("click", () => openSoldSheet());
+
+  // ----- upload a new cover -----
+  const coverInput = root.querySelector("[data-cover-file]");
+  root.querySelector("[data-change-cover]").addEventListener("click", () => coverInput.click());
+  coverInput.addEventListener("change", async () => {
+    const file = coverInput.files?.[0];
+    coverInput.value = "";
+    if (!file) return;
+    const editBtn = root.querySelector("[data-change-cover]");
+    spinnerButtonStart(editBtn);
+    try {
+      const dataUrl = await resizeImage(file, 800, 0.88);
+      const { tape: updated } = await api.uploadCover(tape.id, dataUrl);
+      upsertTapes([updated]);
+      toast("New cover saved. 📼");
+      rerender();
+    } catch (err) {
+      toast(err.message, { error: true });
+      spinnerButtonStop(editBtn);
+    }
+  });
+
+  // ----- market value lookup -----
+  root.querySelector("[data-value]").addEventListener("click", async () => {
+    const current = readForm();
+    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(
+      [current.title, current.year, "VHS"].filter(Boolean).join(" ")
+    )}&LH_Sold=1&LH_Complete=1`;
+    const { body } = openSheet({
+      title: "Market Value",
+      content: `
+        <div class="value-loading"><span class="spinner dark"></span><p class="centered-note">Sizing up “${esc(current.title)}”…</p></div>
+        <div class="value-result" hidden></div>
+        <div class="stack mt-16">
+          <a class="btn gray" href="${esc(ebayUrl)}" target="_blank" rel="noopener">See Real Sold Prices on eBay</a>
+        </div>
+        <p class="hint" style="padding:10px 4px 0; text-align:center">Estimate from collector-market knowledge — always check live comps before pricing a rarity.</p>`,
+    });
+    try {
+      const v = await api.valueEstimate({
+        title: current.title,
+        year: current.year,
+        edition: current.edition,
+        packaging: current.packaging,
+        sealed: current.sealed,
+        condition: current.condition,
+      });
+      const result = body.querySelector(".value-result");
+      const demand = { hot: ["🔥 Hot demand", "var(--red)"], steady: ["📈 Steady seller", "var(--green)"], slow: ["🐢 Slow mover", "var(--label-secondary)"] }[v.demand];
+      result.innerHTML = v.known && v.typical != null
+        ? `
+          <div class="value-hero">
+            <div class="value-big">${money(v.typical)}</div>
+            <div class="value-range">${v.low != null && v.high != null ? `${money(v.low)} – ${money(v.high)} range` : ""}</div>
+            <div class="value-demand" style="color:${demand[1]}">${demand[0]}</div>
+          </div>
+          ${v.factors.length ? `<ul class="value-factors">${v.factors.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
+          ${v.summary ? `<p class="centered-note" style="padding-top:6px">${esc(v.summary)}</p>` : ""}`
+        : `<p class="centered-note">Not enough market history on this one — check the eBay sold listings below.</p>`;
+      body.querySelector(".value-loading").hidden = true;
+      result.hidden = false;
+    } catch (err) {
+      const loading = body.querySelector(".value-loading");
+      if (loading) loading.innerHTML = `<p class="centered-note">${esc(err.message)}</p>`;
+    }
+  });
 
   root.querySelector("[data-relookup]").addEventListener("click", async (event) => {
     const btn = event.currentTarget;
