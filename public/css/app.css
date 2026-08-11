@@ -545,7 +545,7 @@ img { display: block; max-width: 100%; }
 .cover-cell { text-align: left; position: relative; }
 .cover-cell:active .cover-art { transform: scale(0.96); }
 .cover-art {
-  aspect-ratio: 7 / 12;
+  aspect-ratio: 2 / 3;
   border-radius: 6px;
   overflow: hidden;
   background: var(--bg-tertiary);
@@ -607,8 +607,8 @@ img { display: block; max-width: 100%; }
 }
 .tape-row:active { background: var(--fill-secondary); }
 .tape-thumb {
-  width: 34px;
-  height: 58px;
+  width: 36px;
+  height: 54px;
   border-radius: 4px;
   overflow: hidden;
   flex: none;
@@ -897,8 +897,8 @@ img { display: block; max-width: 100%; }
 }
 .review-card + .review-card { margin-top: 10px; }
 .review-thumb {
-  width: 58px;
-  height: 100px;
+  width: 60px;
+  height: 90px;
   border-radius: 6px;
   overflow: hidden;
   flex: none;
@@ -932,8 +932,8 @@ img { display: block; max-width: 100%; }
   margin: 0 auto;
 }
 .detail-cover {
-  width: 128px;
-  aspect-ratio: 7 / 12;
+  width: 132px;
+  aspect-ratio: 2 / 3;
   border-radius: 8px;
   overflow: hidden;
   flex: none;
@@ -1495,13 +1495,37 @@ textarea.big-input:focus { border-color: var(--tint); }
 .box-front img {
   display: block;
   position: absolute;
-  top: -2%;
-  left: -2%;
-  width: 104% !important;
-  height: 104% !important;
+  top: -1.5%;
+  left: -1.5%;
+  width: 103% !important;
+  height: 103% !important;
   max-width: none;
   object-fit: cover !important;
   object-position: center;
+}
+
+/* Off-ratio art (landscape banners, square scans) would be shredded by a
+   center crop, so show it whole over a blurred blow-up of itself — the box
+   still reads as a filled cover instead of a letterboxed hole. */
+.box-front.fit-contain img {
+  position: absolute;
+  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  z-index: 1;
+}
+.box-front.fit-contain::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background-image: var(--poster);
+  background-size: cover;
+  background-position: center;
+  filter: blur(12px) saturate(1.4) brightness(0.7);
+  transform: scale(1.1);
 }
 .box-front svg {
   display: block;
