@@ -8,6 +8,7 @@ import { coverArt } from "./covers.js";
 import { toast, emptyState, confirmSheet } from "./ui.js";
 import { state, go, signOut, upsertTapes } from "./app.js";
 import { runCountUps } from "./delight.js";
+import { columnChart, barList, areaChart, monthlyRevenue, wireChartTips } from "./charts.js";
 import { maybeOfferInstall, isStandalone } from "./install.js";
 
 // ---------- Stats ----------
@@ -65,14 +66,24 @@ export function renderStats(root) {
         </div>
       </div>
 
-      ${barSection("Genres", genreCounts, "var(--tint)")}
-      ${barSection("Decades", decadeCounts, "var(--purple)", true)}
-      ${barSection("Top Directors", directorCounts, "var(--orange)")}
+      ${chartSection("By Decade", columnChart([...decadeCounts].sort((a, b) => a[0].localeCompare(b[0])), { hue: "var(--tint)" }))}
+      ${chartSection("Genres", barList(genreCounts.slice(0, 8), { hue: "var(--purple)", total: tapes.length }))}
+      ${chartSection("Top Directors", barList(directorCounts.slice(0, 8), { hue: "var(--orange)" }))}
       `
       }
     </div>`;
 
   runCountUps(root);
+  wireChartTips(root);
+}
+
+function chartSection(title, markup) {
+  if (!markup) return "";
+  return `
+    <div class="section-pad">
+      <div class="group-label" style="padding-left:0">${esc(title)}</div>
+      <div class="group chart-card">${markup}</div>
+    </div>`;
 }
 
 function tally(list, keyFn) {
@@ -85,27 +96,6 @@ function tally(list, keyFn) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }
 
-function barSection(title, entries, color, sortByName = false) {
-  if (entries.length === 0) return "";
-  const shown = sortByName ? [...entries].sort((a, b) => a[0].localeCompare(b[0])) : entries.slice(0, 8);
-  const max = Math.max(...shown.map(([, n]) => n));
-  return `
-    <div class="section-pad">
-      <div class="group-label" style="padding-left:0">${esc(title)}</div>
-      <div class="group">
-        ${shown
-          .map(
-            ([name, count], i) => `
-          <div class="bar-row">
-            <div class="bar-name">${esc(name)}</div>
-            <div class="bar-track"><div class="bar-fill" style="--i:${i}; width:${Math.round((count / max) * 100)}%; background:${color}"></div></div>
-            <div class="bar-count">${count}</div>
-          </div>`
-          )
-          .join("")}
-      </div>
-    </div>`;
-}
 
 // ---------- Sales ----------
 
@@ -139,6 +129,13 @@ export function renderSales(root) {
         </div>
       </div>
 
+      ${(() => {
+        const series = monthlyRevenue(sold);
+        return series.length >= 2
+          ? `<div class="section-pad" style="padding-bottom:0"><div class="group-label" style="padding-left:0">Revenue by Month</div><div class="group chart-card">${areaChart(series, { hue: "var(--green)" })}</div></div>`
+          : "";
+      })()}
+
       <div class="tape-list mt-8 fade-in">
         ${sold
           .map((tape) => {
@@ -165,6 +162,7 @@ export function renderSales(root) {
     el.addEventListener("click", () => go("detail", el.dataset.tape))
   );
   runCountUps(root);
+  wireChartTips(root);
 }
 
 // ---------- Settings ----------

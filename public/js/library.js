@@ -71,9 +71,12 @@ export function renderLibrary(root) {
         </div>
       </div>
       <div class="chips" style="margin-top:6px">
-        ${FILTERS.map(
-          (f) => `<button class="chip${lib.filter === f.id ? " active" : ""}" data-filter="${f.id}">${f.label}${countFor(f.id)}</button>`
-        ).join("")}
+        ${FILTERS.map((f) => {
+          const n = countFor(f.id);
+          return `<button class="chip${lib.filter === f.id ? " active" : ""}" data-filter="${f.id}">
+              <span class="chip-label">${f.label}</span>${n ? `<span class="chip-sep"></span><span class="chip-count">${n}</span>` : ""}
+            </button>`;
+        }).join("")}
       </div>
       <div class="mt-8" data-list-container></div>
     </div>`;
@@ -123,9 +126,8 @@ export function renderLibrary(root) {
 }
 
 function countFor(filterId) {
-  if (filterId === "all") return state.tapes.length ? ` ${state.tapes.length}` : "";
-  const n = state.tapes.filter((t) => (t.status || "keep") === filterId).length;
-  return n ? ` ${n}` : "";
+  if (filterId === "all") return state.tapes.length;
+  return state.tapes.filter((t) => (t.status || "keep") === filterId).length;
 }
 
 function renderListContainer(container, tapes) {
