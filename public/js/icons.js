@@ -3,18 +3,16 @@
 const svg = (inner, viewBox = "0 0 24 24") =>
   `<svg viewBox="${viewBox}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 
+// Google Material Symbols (Rounded), loaded from Google Fonts in index.html.
+// Used for the tab bar and the library view/filter/sort controls.
+const msym = (name) => `<span class="msym" aria-hidden="true">${name}</span>`;
+
 export const icons = {
-  library: svg(
-    `<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18M7 5v14M17 5v14"/>`
-  ),
-  stats: svg(`<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>`),
-  sales: svg(
-    `<path d="M12 2v20M17 6.5c0-1.9-2.2-3-5-3s-5 1.1-5 3 1.8 2.7 5 3.2 5 1.4 5 3.3-2.2 3-5 3-5-1.1-5-3"/>`
-  ),
-  settings: svg(
-    `<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.7l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.7-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.7.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.7 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.7.3h.1a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.6 1.6 0 0 0 1 1.5h.1a1.6 1.6 0 0 0 1.7-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.7v.1a1.6 1.6 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.6 1.6 0 0 0-1.5 1Z"/>`
-  ),
-  plus: svg(`<path d="M12 5v14M5 12h14"/>`),
+  library: msym("video_library"),
+  stats: msym("bar_chart"),
+  sales: msym("attach_money"),
+  settings: msym("settings"),
+  plus: msym("add"),
   camera: svg(
     `<path d="M4 8h2.2l1.4-2.2A2 2 0 0 1 9.3 5h5.4a2 2 0 0 1 1.7.8L17.8 8H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="14" r="3.4"/>`
   ),
@@ -26,12 +24,8 @@ export const icons = {
     `<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6M8 13h1.5M8 17h8M12.5 13H16"/>`
   ),
   search: svg(`<circle cx="11" cy="11" r="7"/><path d="m20 20-3.8-3.8"/>`),
-  grid: svg(
-    `<rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/>`
-  ),
-  rows: svg(
-    `<rect x="3.5" y="4" width="17" height="6.5" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="1.5"/>`
-  ),
+  grid: msym("grid_view"),
+  rows: msym("view_agenda"),
   chevronRight: svg(`<path d="m9 6 6 6-6 6"/>`),
   chevronLeft: svg(`<path d="m15 6-6 6 6 6"/>`),
   check: svg(`<path d="m4.5 12.5 5 5 10-11"/>`, "0 0 24 24"),
@@ -42,10 +36,8 @@ export const icons = {
   tape: svg(
     `<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="8" cy="12" r="2.2"/><circle cx="16" cy="12" r="2.2"/><path d="M8 14.2h8"/>`
   ),
-  sortArrows: svg(`<path d="M8 4v16M8 4 5 7M8 4l3 3M16 20V4M16 20l-3-3M16 20l3-3"/>`),
-  table: svg(
-    `<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9.5h18M3 15h18M9.5 4v16"/>`
-  ),
+  sortArrows: msym("swap_vert"),
+  table: msym("table"),
   trash: svg(
     `<path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12"/><path d="M10 11v6M14 11v6"/>`
   ),

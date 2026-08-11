@@ -63,7 +63,9 @@ html { height: 100%; }
 
 body {
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* SF Pro Display on Apple hardware; Inter (Google Fonts) is the closest
+     stand-in elsewhere — Apple doesn't license SF for other platforms. */
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   font-size: 17px;
   line-height: 1.35;
   background: var(--bg);
@@ -89,6 +91,25 @@ img { display: block; max-width: 100%; }
 .screen.no-tabs { padding-bottom: env(safe-area-inset-bottom); }
 
 .container { padding: 0 16px; max-width: 640px; margin: 0 auto; }
+
+/* ---------- Material Symbols ---------- */
+
+.msym {
+  font-family: "Material Symbols Rounded";
+  font-weight: 500;
+  font-style: normal;
+  font-size: 24px;
+  line-height: 1;
+  display: inline-block;
+  white-space: nowrap;
+  letter-spacing: normal;
+  text-transform: none;
+  direction: ltr;
+  font-variation-settings: "FILL" 0, "GRAD" 0, "opsz" 24;
+  font-feature-settings: "liga";
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
 
 /* ---------- Navigation bar ---------- */
 
@@ -179,7 +200,9 @@ img { display: block; max-width: 100%; }
   font-weight: 500;
 }
 .tab svg { width: 26px; height: 26px; }
+.tab .msym { font-size: 26px; }
 .tab.active { color: var(--tint); }
+.tab.active .msym { font-variation-settings: "FILL" 1, "GRAD" 0, "opsz" 24; }
 .tab:active { opacity: 0.6; }
 .tab-add {
   flex: 1;
@@ -188,19 +211,74 @@ img { display: block; max-width: 100%; }
   justify-content: center;
 }
 .tab-add-btn {
-  width: 46px;
-  height: 46px;
+  width: 48px;
+  height: 48px;
   margin-top: -14px;
   border-radius: 50%;
-  background: var(--tint);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 14px rgba(0, 122, 255, 0.45);
+  position: relative;
+  overflow: hidden;
+  /* SMPTE color bars under a top glass sheen, slowly drifting like a paused
+     tape. Static + scanlines layer on via the pseudo-elements below. */
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06) 48%, rgba(0, 0, 0, 0.1)),
+    linear-gradient(90deg,
+      #e8e8e8 0 14.28%, #f5d800 0 28.57%, #00e0e0 0 42.85%,
+      #00d05a 0 57.14%, #f536d8 0 71.42%, #f2222a 0 85.71%, #2447f0 0 100%);
+  background-size: 100% 100%, 300% 100%;
+  animation: vhs-bars-drift 8s linear infinite;
+  box-shadow:
+    0 4px 16px rgba(255, 45, 117, 0.3),
+    0 4px 14px rgba(0, 122, 255, 0.3),
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.4);
+}
+.tab-add-btn::before {
+  /* white static, jittering between frames */
+  content: "";
+  position: absolute;
+  inset: -25%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.17;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: vhs-static 0.4s steps(3) infinite;
+}
+.tab-add-btn::after {
+  /* scan lines + glass hot-spot */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(130% 75% at 50% -8%, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0) 55%),
+    repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.2) 0 1px, transparent 1px 3px);
 }
 .tab-add-btn svg { width: 24px; height: 24px; }
+.tab-add-btn .msym,
+.tab-add-btn svg {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+}
+.tab-add-btn .msym { font-size: 27px; font-weight: 600; }
 .tab-add-btn:active { transform: scale(0.94); }
+@keyframes vhs-bars-drift {
+  from { background-position: 0 0, 0% 0; }
+  to { background-position: 0 0, 300% 0; }
+}
+@keyframes vhs-static {
+  0% { transform: translate(0, 0); }
+  33% { transform: translate(-5%, 4%); }
+  66% { transform: translate(4%, -5%); }
+  100% { transform: translate(0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tab-add-btn, .tab-add-btn::before { animation: none; }
+}
 
 /* ---------- Search bar ---------- */
 
@@ -247,6 +325,7 @@ img { display: block; max-width: 100%; }
   white-space: nowrap;
 }
 .segmented button svg { width: 16px; height: 16px; }
+.segmented button .msym { font-size: 18px; }
 .segmented button.active {
   background: var(--bg-elevated);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
@@ -269,15 +348,40 @@ img { display: block; max-width: 100%; }
 .chips::-webkit-scrollbar { display: none; }
 .chip {
   flex: none;
-  padding: 6px 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
   border-radius: 100px;
-  background: var(--fill);
+  background: var(--bg-elevated);
+  border: 0.5px solid var(--separator);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   font-size: 14px;
   font-weight: 500;
   color: var(--label);
   white-space: nowrap;
 }
-.chip.active { background: var(--tint); color: #fff; }
+.chip .chip-label { letter-spacing: 0.01em; }
+.chip .chip-sep {
+  width: 1px;
+  height: 12px;
+  background: currentColor;
+  opacity: 0.22;
+}
+.chip .chip-count {
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+}
+.chip.active {
+  background: var(--tint);
+  border-color: var(--tint);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
+}
+.chip.active .chip-sep { opacity: 0.4; }
+.chip.active .chip-count { opacity: 0.9; }
 .chip:active { opacity: 0.7; }
 
 /* ---------- Buttons ---------- */
@@ -304,6 +408,8 @@ img { display: block; max-width: 100%; }
 .btn.destructive-filled { background: var(--red); color: #fff; }
 .btn.small { padding: 9px 14px; font-size: 15px; border-radius: 10px; width: auto; }
 .btn svg { width: 20px; height: 20px; }
+.btn .msym { font-size: 21px; }
+.nav-btn .msym { font-size: 22px; }
 
 .spinner {
   width: 20px;
@@ -549,6 +655,7 @@ img { display: block; max-width: 100%; }
   color: var(--label-secondary);
 }
 .empty .empty-icon { width: 72px; height: 72px; margin: 0 auto 16px; opacity: 0.5; }
+.empty .empty-icon .msym { font-size: 68px; }
 .empty h3 { color: var(--label); font-size: 20px; margin-bottom: 6px; }
 .empty p { font-size: 15px; }
 
@@ -1488,6 +1595,7 @@ a.btn { text-decoration: none; }
   justify-content: center;
 }
 .sort-btn svg { width: 17px; height: 17px; }
+.sort-btn .msym { font-size: 19px; }
 .sort-btn:active { opacity: 0.6; }
 
 /* ---------- Spreadsheet view ---------- */

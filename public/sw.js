@@ -6,7 +6,8 @@
 // the network fails (offline at a swap meet), serving the last good copy.
 // API calls are never cached.
 
-const CACHE = "vhsvault-shell-v1";
+const CACHE = "vhsvault-shell-v2";
+const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", () => {
   self.skipWaiting();
@@ -26,7 +27,26 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // posters, etc. — browser default
+  if (url.origin !== self.location.origin) {
+    // Google Fonts (icons + Inter) are immutable: cache-first so the tab bar
+    // icons survive offline swap meets after the first visit.
+    if (FONT_HOSTS.includes(url.hostname)) {
+      event.respondWith(
+        caches.match(req).then(
+          (hit) =>
+            hit ||
+            fetch(req).then((res) => {
+              if (res.ok || res.type === "opaque") {
+                const copy = res.clone();
+                caches.open(CACHE).then((cache) => cache.put(req, copy));
+              }
+              return res;
+            })
+        )
+      );
+    }
+    return; // other cross-origin (posters, etc.) — browser default
+  }
   if (url.pathname.startsWith("/api/")) return; // live data, never cached
 
   event.respondWith(
