@@ -970,9 +970,9 @@ img { display: block; max-width: 100%; }
   border-radius: 14px;
   padding: 14px 16px;
 }
-.stat-card .stat-label { font-size: 13px; color: var(--label-secondary); font-weight: 500; }
-.stat-card .stat-value { font-size: 26px; font-weight: 800; margin-top: 2px; letter-spacing: -0.02em; }
-.stat-card .stat-sub { font-size: 12px; color: var(--label-secondary); margin-top: 2px; }
+.stat-card .stat-label { font-size: 12px; color: var(--label-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-card .stat-value { font-size: 30px; font-weight: 800; margin-top: 3px; letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.stat-card .stat-sub { font-size: 12px; color: var(--label-secondary); margin-top: 3px; }
 .stat-card.wide { grid-column: 1 / -1; }
 
 .bar-row { display: flex; align-items: center; gap: 10px; padding: 8px 16px; }
@@ -1757,4 +1757,82 @@ a.btn { text-decoration: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .detail-screen { animation: none; }
+}
+
+/* ---------- Chart kit ---------- */
+/* One hue per chart; marks carry color, text stays in ink tokens. */
+
+.chart-card { padding: 14px 12px 10px; overflow: hidden; }
+.chart-scroll { overflow-x: auto; scrollbar-width: none; }
+.chart-scroll::-webkit-scrollbar { display: none; }
+.chartkit { display: block; width: 100%; height: auto; }
+
+.chartkit .ck-base { stroke: var(--separator); stroke-width: 1; }
+.chartkit .ck-lab { font-size: 11px; font-weight: 500; fill: var(--label-secondary); }
+.chartkit .ck-val { font-size: 11px; font-weight: 700; fill: var(--label); font-variant-numeric: tabular-nums; }
+.chartkit .ck-val-last { font-size: 12px; }
+
+.chartkit .ck-col .ck-bar { animation: ck-grow 0.55s var(--spring-soft, cubic-bezier(0.2, 0.9, 0.3, 1.1)) both; animation-delay: calc(var(--i) * 55ms); }
+@keyframes ck-grow { from { transform: scaleY(0); } }
+.chartkit .ck-col:active .ck-bar { filter: brightness(1.15); }
+
+.ck-area .ck-line { fill: none; stroke: var(--hue); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ck-area .ck-dot { fill: var(--hue); stroke: var(--bg-elevated); stroke-width: 2; }
+.ck-area .ck-reveal { animation: ck-reveal 0.9s cubic-bezier(0.3, 0.7, 0.2, 1) both; transform-origin: left; }
+@keyframes ck-reveal { from { transform: scaleX(0); } }
+
+/* horizontal bar list */
+.barlist { padding: 4px 12px 6px; }
+.bl-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 4px;
+  text-align: left;
+}
+.bl-name {
+  flex: none;
+  width: 118px;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bl-track { flex: 1; height: 12px; border-radius: 2px 6px 6px 2px; background: var(--fill-secondary); overflow: hidden; }
+.bl-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px 6px 6px 2px;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--hue) 72%, transparent), var(--hue));
+  animation: ck-widen 0.55s var(--spring-soft, cubic-bezier(0.2, 0.9, 0.3, 1.1)) both;
+  animation-delay: calc(var(--i) * 45ms);
+  transform-origin: left;
+}
+@keyframes ck-widen { from { transform: scaleX(0); } }
+.bl-count { flex: none; min-width: 30px; text-align: right; font-size: 13px; font-weight: 700; color: var(--label); font-variant-numeric: tabular-nums; }
+.bl-row:active .bl-fill { filter: brightness(1.15); }
+
+/* tap-to-inspect tooltip */
+.chart-tip {
+  position: fixed;
+  z-index: 90;
+  background: var(--label);
+  color: var(--bg-elevated);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: translateY(4px) scale(0.96);
+  transition: opacity 0.16s ease, transform 0.16s var(--spring, ease);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.chart-tip.show { opacity: 1; transform: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .chartkit .ck-bar, .ck-area .ck-reveal, .bl-fill { animation: none; }
 }
