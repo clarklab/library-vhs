@@ -50,7 +50,7 @@ function pickPalette(tape) {
   return PALETTES[hash(tape.title || "?") % PALETTES.length];
 }
 
-function wrapTitle(title, maxChars = 11, maxLines = 4) {
+function wrapTitle(title, maxChars = 10, maxLines = 4) {
   const words = String(title || "Untitled").toUpperCase().split(/\s+/);
   const lines = [];
   let line = "";
@@ -79,34 +79,38 @@ export function generatedCover(tape) {
   const lines = wrapTitle(tape.title);
   const h = hash(tape.title || "?");
   const angle = (h % 60) - 30;
-  const fontSize = lines.some((l) => l.length > 9) ? 30 : 36;
+  // Size to the longest line so the title never runs past the box edges,
+  // even when the condensed font isn't available and a wider one is used.
+  const longest = Math.max(...lines.map((l) => l.length), 1);
+  const fontSize = Math.max(14, Math.min(34, Math.round(172 / (longest * 0.6))));
   const lineHeight = fontSize * 1.08;
-  const titleY = 150 - ((lines.length - 1) * lineHeight) / 2;
+  const titleY = 132 - ((lines.length - 1) * lineHeight) / 2;
 
   const titleText = lines
     .map(
       (line, i) =>
-        `<text x="105" y="${titleY + i * lineHeight}" text-anchor="middle" font-size="${fontSize}" font-family="'Arial Narrow', 'Helvetica Neue', Impact, sans-serif" font-weight="800" fill="${light}" letter-spacing="0.5">${esc(line)}</text>`
+        `<text x="100" y="${titleY + i * lineHeight}" text-anchor="middle" font-size="${fontSize}" font-family="'Arial Narrow', 'Helvetica Neue', Impact, sans-serif" font-weight="800" fill="${light}" letter-spacing="0.5">${esc(line)}</text>`
     )
     .join("");
 
-  return `<svg viewBox="0 0 210 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${esc(tape.title)}">
+  // 200x300 = 2:3, the same ratio as the cover box and OMDb poster art.
+  return `<svg viewBox="0 0 200 300" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice" role="img" aria-label="${esc(tape.title)}">
   <defs>
     <linearGradient id="g${h}" x1="0" y1="0" x2="1" y2="1" gradientTransform="rotate(${angle} .5 .5)">
       <stop offset="0" stop-color="${bg}"/>
       <stop offset="1" stop-color="${accent}" stop-opacity="0.75"/>
     </linearGradient>
   </defs>
-  <rect width="210" height="360" fill="${bg}"/>
-  <rect width="210" height="360" fill="url(#g${h})"/>
-  <rect width="210" height="360" fill="none" stroke="rgba(0,0,0,0.35)" stroke-width="6"/>
-  <rect x="0" y="0" width="210" height="34" fill="${accent}"/>
-  <text x="12" y="23" font-size="15" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" fill="${bg}" letter-spacing="3">VHS</text>
-  <text x="198" y="23" text-anchor="end" font-size="11" font-family="Helvetica, Arial, sans-serif" font-weight="700" fill="${bg}" letter-spacing="1">HI-FI STEREO</text>
+  <rect width="200" height="300" fill="${bg}"/>
+  <rect width="200" height="300" fill="url(#g${h})"/>
+  <rect width="200" height="300" fill="none" stroke="rgba(0,0,0,0.35)" stroke-width="6"/>
+  <rect x="0" y="0" width="200" height="30" fill="${accent}"/>
+  <text x="12" y="21" font-size="14" font-family="Impact, 'Arial Black', sans-serif" font-weight="900" fill="${bg}" letter-spacing="3">VHS</text>
+  <text x="188" y="21" text-anchor="end" font-size="10" font-family="Helvetica, Arial, sans-serif" font-weight="700" fill="${bg}" letter-spacing="1">HI-FI STEREO</text>
   ${titleText}
-  <rect x="30" y="300" width="150" height="3" fill="${accent}"/>
-  <text x="105" y="326" text-anchor="middle" font-size="16" font-family="Helvetica, Arial, sans-serif" font-weight="700" fill="${light}" letter-spacing="2">${tape.year ? esc(String(tape.year)) : " "}</text>
-  <text x="105" y="346" text-anchor="middle" font-size="9" font-family="Helvetica, Arial, sans-serif" fill="${light}" opacity="0.7" letter-spacing="1.5">${esc((tape.genre || "").split(",")[0].toUpperCase() || "FEATURE PRESENTATION")}</text>
+  <rect x="30" y="246" width="140" height="3" fill="${accent}"/>
+  <text x="100" y="270" text-anchor="middle" font-size="15" font-family="Helvetica, Arial, sans-serif" font-weight="700" fill="${light}" letter-spacing="2">${tape.year ? esc(String(tape.year)) : " "}</text>
+  <text x="100" y="288" text-anchor="middle" font-size="8.5" font-family="Helvetica, Arial, sans-serif" fill="${light}" opacity="0.7" letter-spacing="1.5">${esc((tape.genre || "").split(",")[0].toUpperCase() || "FEATURE PRESENTATION")}</text>
 </svg>`;
 }
 
@@ -130,7 +134,7 @@ const SEAL_GLINT = `<span class="seal-glint" aria-hidden="true"></span>`;
  */
 export function coverArt(tape) {
   const art = tape.posterUrl
-    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" crossorigin="anonymous" onload="window.__vhsTrimPoster(this)" onerror="window.__vhsPosterError(this)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
+    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" crossorigin="anonymous" onload="window.__vhsPosterLoaded(this)" onerror="window.__vhsPosterError(this)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
     : generatedCover(tape);
   return `<span class="box-front">${isSealed(tape) ? art + SEAL_GLINT : art}</span>`;
 }
@@ -157,6 +161,37 @@ window.__vhsPosterError = (img) => {
     return;
   }
   img.outerHTML = window.__vhsFallbackCover(img.dataset.t);
+};
+
+/**
+ * Decide how a poster should sit in its box. Art at (or near) the box's own
+ * 2:3 ratio fills it edge to edge. Anything materially wider or squarer —
+ * landscape banners, square scans — would lose most of its content to a
+ * center crop, so it is shown whole over a blurred blow-up of itself.
+ */
+const BOX_RATIO = 2 / 3;
+const RATIO_TOLERANCE = 0.14; // ~1/8 off before we stop cropping
+
+function fitPoster(img) {
+  const front = img.parentElement;
+  if (!front || !front.classList.contains("box-front")) return;
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) return;
+  const ratio = w / h;
+  if (Math.abs(ratio - BOX_RATIO) / BOX_RATIO > RATIO_TOLERANCE) {
+    front.style.setProperty("--poster", `url("${img.currentSrc || img.src}")`);
+    front.classList.add("fit-contain");
+  } else {
+    front.classList.remove("fit-contain");
+    front.style.removeProperty("--poster");
+  }
+}
+
+/** Poster load hook: fit it to the box, then trim any baked-in scan borders. */
+window.__vhsPosterLoaded = (img) => {
+  fitPoster(img);
+  window.__vhsTrimPoster(img);
 };
 
 /**
