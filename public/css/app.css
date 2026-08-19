@@ -562,10 +562,14 @@ img { display: block; max-width: 100%; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Reserve both lines always: a one-line title keeps the same block height as
+     a wrapped one, so covers and subtitles line up across the whole row. */
+  min-height: 2.5em;
 }
 .cover-sub { font-size: 11px; color: var(--label-secondary); margin-top: 1px; }
 .cover-badge {
   position: absolute;
+  z-index: 3;
   top: 6px;
   right: 6px;
   font-size: 10px;
@@ -1337,12 +1341,15 @@ textarea.big-input:focus { border-color: var(--tint); }
 
 @media (prefers-reduced-motion: no-preference) {
   .cover-grid .cover-cell {
-    animation: cover-in 0.55s var(--spring) both;
-    animation-delay: calc(var(--i, 0) * 32ms);
+    animation: cover-in 0.42s var(--spring) both;
+    animation-delay: calc(var(--i, 0) * 22ms);
   }
+  /* Fade and slide only — no scale. A staggered scale means that for the first
+     half-second neighbouring covers are rendered at visibly different sizes,
+     which is what made the grid look like it held mismatched artwork. */
   @keyframes cover-in {
-    0% { opacity: 0; transform: translateY(18px) scale(0.9); }
-    70% { opacity: 1; transform: translateY(-2px) scale(1.015); }
+    0% { opacity: 0; transform: translateY(14px); }
+    70% { opacity: 1; transform: translateY(-2px); }
     100% { opacity: 1; transform: none; }
   }
   .tape-list .tape-row {
