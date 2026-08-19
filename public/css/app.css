@@ -1341,12 +1341,15 @@ textarea.big-input:focus { border-color: var(--tint); }
 
 @media (prefers-reduced-motion: no-preference) {
   .cover-grid .cover-cell {
-    animation: cover-in 0.55s var(--spring) both;
-    animation-delay: calc(var(--i, 0) * 32ms);
+    animation: cover-in 0.42s var(--spring) both;
+    animation-delay: calc(var(--i, 0) * 22ms);
   }
+  /* Fade and slide only — no scale. A staggered scale means that for the first
+     half-second neighbouring covers are rendered at visibly different sizes,
+     which is what made the grid look like it held mismatched artwork. */
   @keyframes cover-in {
-    0% { opacity: 0; transform: translateY(18px) scale(0.9); }
-    70% { opacity: 1; transform: translateY(-2px) scale(1.015); }
+    0% { opacity: 0; transform: translateY(14px); }
+    70% { opacity: 1; transform: translateY(-2px); }
     100% { opacity: 1; transform: none; }
   }
   .tape-list .tape-row {
