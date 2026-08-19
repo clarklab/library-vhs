@@ -562,10 +562,14 @@ img { display: block; max-width: 100%; }
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Reserve both lines always: a one-line title keeps the same block height as
+     a wrapped one, so covers and subtitles line up across the whole row. */
+  min-height: 2.5em;
 }
 .cover-sub { font-size: 11px; color: var(--label-secondary); margin-top: 1px; }
 .cover-badge {
   position: absolute;
+  z-index: 3;
   top: 6px;
   right: 6px;
   font-size: 10px;
