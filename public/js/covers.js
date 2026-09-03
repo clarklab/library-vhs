@@ -170,7 +170,13 @@ window.__vhsPosterError = (img) => {
  * center crop, so it is shown whole over a blurred blow-up of itself.
  */
 const BOX_RATIO = 2 / 3;
-const RATIO_TOLERANCE = 0.14; // ~1/8 off before we stop cropping
+// How far off 2:3 a poster may be before we letterbox it instead of cropping.
+// Sleeve scans drift a fair way off the nominal ratio (0.51-0.83 covers almost
+// all of them) and cropping those keeps every cover reading as one solid
+// frame; letterboxing them is what made the grid look ragged. Genuinely
+// off-ratio art — 16:9 banners, square stills — is still well outside this and
+// falls through to contain so it stays recognisable.
+const RATIO_TOLERANCE = 0.24;
 
 function fitPoster(img) {
   const front = img.parentElement;
