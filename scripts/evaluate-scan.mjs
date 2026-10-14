@@ -51,6 +51,7 @@ if (initial.needsVerification && !args.includes("--no-verify")) {
     final = await scan({ image, sourceId: fixtureName, mode: "thorough", verificationContext: {
       countedCount: initial.verification.countedCount,
       uncertainCount: initial.verification.uncertainCount,
+      countPositions: initial.verification.positions,
       tapes: initial.tapes,
     } });
   } catch (error) { verificationError = error.message; }

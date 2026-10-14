@@ -4,6 +4,7 @@ import { resizeImage } from "./util.js";
 
 export const MAX_PHOTOS = 10;
 export const SCAN_CONCURRENCY = 2;
+export const PRICING_CONCURRENCY = 2;
 const newId = () => crypto.randomUUID();
 const clone = (value) => structuredClone(value);
 const pendingStatuses = new Set(["queued", "processing", "preparing"]);
@@ -83,6 +84,19 @@ export const draftStore = {
   },
 };
 
+export function normalizeMarker(marker) {
+  return marker && typeof marker.x === "number" && Number.isFinite(marker.x) && marker.x >= 0 && marker.x <= 1 && typeof marker.y === "number" && Number.isFinite(marker.y) && marker.y >= 0 && marker.y <= 1 ? { x: marker.x, y: marker.y } : null;
+}
+
+const priceIdentityFields = ["title", "year", "format", "edition", "artist", "condition", "sealed", "packaging", "barcode"];
+export function estimateSubject(item) {
+  return Object.fromEntries(priceIdentityFields.map((field) => [field, item[field] ?? (field === "year" || field === "sealed" ? null : "")]));
+}
+const pricingFingerprint = (item) => JSON.stringify(estimateSubject(item));
+export function canPriceItem(item) {
+  return item.include !== false && !isItemSaved(item) && typeof item.title === "string" && Boolean(item.title.trim()) && !/^(unknown|unreadable|unidentified|untitled)(\b|$)/i.test(item.title.trim()) && ["VHS", "DVD", "CD", "Blu-ray"].includes(item.format);
+}
+
 export function isItemSaved(item) { return Boolean(item.savedId || item.scoutSavedId); }
 
 export function normalizeTitle(value) {
@@ -119,8 +133,13 @@ export function requiresReview(item) {
   return item.include !== false && !isItemSaved(item) && (!item.title.trim() || item.format === "unknown" || (item.needsReview && !item.confirmed));
 }
 
-export function requiresPhotoReview(photo) {
-  return photo.status === "complete" && photo.needsPhotoReview && !photo.reviewed;
+export function photoCountMismatch(photo, items) {
+  const counted = photo?.verification?.countedCount;
+  return photo?.status === "complete" && Number.isInteger(counted) && Array.isArray(items) && counted !== items.filter((item) => item.photoId === photo.id).length;
+}
+
+export function requiresPhotoReview(photo, items) {
+  return photo.status === "complete" && (photo.needsPhotoReview || photoCountMismatch(photo, items)) && !photo.reviewed;
 }
 
 export function sessionSummary(draft) {
@@ -132,7 +151,7 @@ export function sessionSummary(draft) {
     errors: draft.photos.filter((p) => p.status === "error").length,
     tapes: draft.items.filter((i) => i.include !== false && !isItemSaved(i)).length,
     needsReview: draft.items.filter(requiresReview).length,
-    photoReviews: draft.photos.filter(requiresPhotoReview).length,
+    photoReviews: draft.photos.filter((photo) => requiresPhotoReview(photo, draft.items)).length,
     saved: draft.items.filter((i) => isItemSaved(i)).length,
     paused: draft.paused,
   };
@@ -149,6 +168,7 @@ export function tapePayload(item, draft) {
   for (const key of ["director", "actors", "genre", "runtime", "rated", "plot", "imdbRating", "imdbId", "posterUrl"]) {
     if (item[key]) payload[key] = item[key];
   }
+  if (item.estimate) { payload.estimate = item.estimate; payload.estimateFor = item.estimateFor || estimateSubject(item); }
   return payload;
 }
 
@@ -161,6 +181,14 @@ export class ScanSession {
     this.id = id;
     this.draft = saved || { userId, id: id(), photos: [], items: [], mode: "fast", destination: "collection", scoutName: "", paused: true, location: "", createdAt: Date.now() };
     this.draft.paused = true;
+    this.draft.saveDestination ||= this.draft.items.some((item) => item.scoutSavedId) ? "scout" : this.draft.items.some((item) => item.savedId) ? "collection" : undefined;
+    this.draft.items.forEach((item) => {
+      item.marker = normalizeMarker(item.marker);
+      if (["queued", "loading"].includes(item.pricingStatus)) item.pricingStatus = "paused";
+      else item.pricingStatus ||= item.estimate ? "complete" : "idle";
+      item.pricingError ||= "";
+      if (item.estimate && !item.estimateFor) item.estimateFor = estimateSubject(item);
+    });
     this.draft.photos.forEach((photo) => {
       if (photo.status === "processing") photo.status = "queued";
       if (!photo.image && photo.status !== "preparing") {
@@ -174,6 +202,8 @@ export class ScanSession {
     });
     this.listeners = new Set();
     this.controllers = new Map();
+    this.pricingControllers = new Map();
+    this.pricingPaused = true;
     this.persistChain = Promise.resolve();
     this.prepareChain = Promise.resolve();
     this.preparing = 0;
@@ -238,6 +268,7 @@ export class ScanSession {
   resume() { this.draft.paused = false; this.changed(); this.pump(); }
   pause() {
     this.draft.paused = true;
+    this.pausePricing({ notify: false });
     for (const controller of this.controllers.values()) controller.abort();
     this.draft.photos.forEach((photo) => { if (photo.status === "processing") photo.status = "queued"; });
     this.changed({ immediate: true });
@@ -283,9 +314,15 @@ export class ScanSession {
               countedCount: response.verification?.countedCount ?? null,
               uncertainCount: response.verification?.uncertainCount ?? 0,
               tapes: response.tapes,
+              countPositions: response.verification?.positions,
             },
           });
-          if (Array.isArray(verified?.tapes)) { response = verified; photo.initialResult = verified; photo.verified = true; }
+          if (Array.isArray(verified?.tapes)) {
+            // The verifier may add, remove or reorder rows. sourceIndex is a
+            // reading order, not a stable physical ID: never borrow its old pin.
+            response = { ...verified, tapes: verified.tapes.map((item) => ({ ...item, ...(Object.hasOwn(item, "marker") ? { marker: normalizeMarker(item.marker) } : {}) })) };
+            photo.initialResult = response; photo.verified = true;
+          }
         } catch (error) {
           if (controller.signal.aborted) throw error;
           photo.verificationError = "The closer look was unavailable. Your first reading is kept; check this photo before saving.";
@@ -296,7 +333,8 @@ export class ScanSession {
       photo.status = "complete";
       photo.stage = "complete";
       photo.verification = response.verification || null;
-      photo.needsPhotoReview = Boolean(photo.verificationError || !response.verification || response.verification.status !== "matched" || response.verification.uncertainCount > 0);
+      photo.coverage = response.coverage || null;
+      photo.needsPhotoReview = Boolean(photo.needsPhotoReview || photo.verificationError || !response.verification || response.verification.status !== "matched" || response.verification.uncertainCount > 0 || photo.coverage?.unplacedCount > 0 || photo.coverage?.overlapCount > 0 || photo.coverage?.independentUnplacedCount > 0 || photo.coverage?.independentOverlapCount > 0 || tapes.some((item) => (Object.hasOwn(item, "marker") && !normalizeMarker(item.marker)) || item.markerIssue === "overlap"));
       photo.reviewed = false;
       photo.notes = response.notes || "";
       photo.warnings = response.warnings || [];
@@ -306,9 +344,12 @@ export class ScanSession {
       photo.durationMs = response.durationMs;
       this.draft.items.push(...tapes.map((tape, index) => ({
         ...tape, title: String(tape.title || ""), format: tape.format || "unknown", clientId: this.id(), photoId: photo.id,
-        sourceIndex: tape.sourceIndex || index + 1, include: true, confirmed: false,
-        needsReview: tape.needsReview === true || tape.confidence !== "high",
+        sourceIndex: tape.sourceIndex || index + 1, marker: normalizeMarker(tape.marker), include: true, confirmed: false, pricingStatus: "idle", pricingError: "",
+        needsReview: tape.needsReview === true || tape.confidence !== "high" || (Object.hasOwn(tape, "marker") && !normalizeMarker(tape.marker)) || tape.markerIssue === "overlap",
       })));
+      // Manual rows can be added while reading. Coverage refers to the final
+      // inventory in this draft, including those rows, not only the AI response.
+      photo.needsPhotoReview ||= photoCountMismatch(photo, this.draft.items);
       delete photo.initialResult;
       await this.changed({ immediate: true });
     } catch (error) {
@@ -337,6 +378,7 @@ export class ScanSession {
   removePhoto(id) {
     if (this.saving) return;
     this.controllers.get(id)?.abort();
+    for (const item of this.draft.items) if (item.photoId === id && !isItemSaved(item)) this.pricingControllers.get(item.clientId)?.abort();
     this.draft.photos = this.draft.photos.filter((p) => p.id !== id);
     this.draft.items = this.draft.items.filter((i) => i.photoId !== id || isItemSaved(i));
     this.changed({ immediate: true });
@@ -356,21 +398,116 @@ export class ScanSession {
       for (const field of ["director", "actors", "genre", "runtime", "rated", "plot", "imdbRating", "imdbId", "posterUrl"]) delete item[field];
       item.matched = false;
     }
+    if (priceIdentityFields.some((field) => Object.hasOwn(patch, field) && patch[field] !== item[field])) this.invalidatePricing(item);
+    if (Object.hasOwn(patch, "marker")) patch = { ...patch, marker: normalizeMarker(patch.marker), markerIssue: normalizeMarker(patch.marker) ? null : "unplaced" };
     Object.assign(item, patch);
-    if (Object.hasOwn(patch, "include") || Object.hasOwn(patch, "format")) {
+    if (item.include === false) {
+      this.pricingControllers.get(item.clientId)?.abort();
+      if (["queued", "loading", "paused"].includes(item.pricingStatus)) item.pricingStatus = item.estimate ? "complete" : "idle";
+    }
+    if (Object.hasOwn(patch, "include") || Object.hasOwn(patch, "format") || Object.hasOwn(patch, "marker")) {
       const photo = this.draft.photos.find((p) => p.id === item.photoId);
-      if (photo?.needsPhotoReview) photo.reviewed = false;
+      if (photo) {
+        if (Object.hasOwn(patch, "include") || Object.hasOwn(patch, "format") || (Object.hasOwn(patch, "marker") && !item.marker)) photo.needsPhotoReview = true;
+        photo.reviewed = false;
+      }
     }
     this.changed();
   }
-  addManual(title, photoId = "") {
-    const item = { clientId: this.id(), title: title.trim(), year: null, format: "VHS", photoId, sourceIndex: null, include: true, confirmed: true, needsReview: false, confidence: "manual" };
+  addManual(title, photoId = "", marker = null) {
+    const item = { clientId: this.id(), title: title.trim(), year: null, format: "VHS", photoId, sourceIndex: null, marker: normalizeMarker(marker), markerIssue: normalizeMarker(marker) ? null : "unplaced", include: true, confirmed: true, needsReview: false, confidence: "manual", pricingStatus: "idle", pricingError: "" };
     if (!item.title || this.saving) return;
     this.draft.items.push(item);
     const photo = this.draft.photos.find((p) => p.id === photoId);
-    if (photo?.needsPhotoReview) photo.reviewed = false;
+    if (photo) { photo.needsPhotoReview = true; photo.reviewed = false; }
     this.changed({ immediate: true });
     return item;
+  }
+  accountMatches() { return this.expectedToken === undefined || typeof localStorage === "undefined" || getToken() === this.expectedToken; }
+  invalidatePricing(item) {
+    this.pricingControllers.get(item.clientId)?.abort();
+    item.estimate = null;
+    delete item.estimateFor;
+    item.pricingStatus = "idle";
+    item.pricingError = "";
+  }
+  pricingSummary() {
+    const items = this.draft.items.filter(canPriceItem);
+    return {
+      active: items.filter((item) => item.pricingStatus === "loading").length,
+      queued: items.filter((item) => item.pricingStatus === "queued").length,
+      completed: items.filter((item) => item.pricingStatus === "complete").length,
+      errors: items.filter((item) => item.pricingStatus === "error").length,
+      paused: items.filter((item) => item.pricingStatus === "paused").length,
+      eligible: items.length,
+    };
+  }
+  priceAll(options = {}) { return this.requestPricing(this.draft.items.map((item) => item.clientId), options); }
+  requestPricing(ids, { refresh = false } = {}) {
+    if (this.disposed || this.saving || !this.accountMatches()) return { queued: 0, skipped: 0 };
+    const selected = new Set(Array.isArray(ids) ? ids : [ids]);
+    let queued = 0, skipped = 0;
+    for (const item of this.draft.items) {
+      if (!selected.has(item.clientId)) continue;
+      if (!canPriceItem(item) || ["loading", "queued"].includes(item.pricingStatus) || (!refresh && item.pricingStatus === "complete" && item.estimate)) { skipped++; continue; }
+      item.pricingStatus = "queued";
+      item.pricingError = "";
+      queued++;
+    }
+    if (queued) { this.pricingPaused = false; this.changed(); this.pumpPricing(); }
+    return { queued, skipped };
+  }
+  pausePricing({ notify = true } = {}) {
+    this.pricingPaused = true;
+    for (const controller of this.pricingControllers.values()) controller.abort();
+    for (const item of this.draft.items) if (["queued", "loading"].includes(item.pricingStatus)) item.pricingStatus = "paused";
+    if (notify) this.changed({ immediate: true });
+  }
+  pumpPricing() {
+    if (this.disposed || this.pricingPaused || this.saving || !this.accountMatches()) return;
+    while (this.pricingControllers.size < PRICING_CONCURRENCY) {
+      const item = this.draft.items.find((candidate) => candidate.pricingStatus === "queued" && canPriceItem(candidate) && !this.pricingControllers.has(candidate.clientId));
+      if (!item) return;
+      this.runPricing(item);
+    }
+  }
+  async runPricing(item) {
+    const controller = new AbortController();
+    const draftId = this.draft.id, fingerprint = pricingFingerprint(item), subject = estimateSubject(item);
+    this.pricingControllers.set(item.clientId, controller);
+    item.pricingStatus = "loading";
+    item.pricingError = "";
+    this.changed();
+    const currentItem = () => !this.disposed && this.accountMatches() && this.draft.id === draftId && this.draft.items.includes(item) && canPriceItem(item) && pricingFingerprint(item) === fingerprint;
+    try {
+      const estimate = await this.client.valueEstimate(subject, { signal: controller.signal, expectedToken: this.expectedToken });
+      if (controller.signal.aborted || !currentItem()) return;
+      if (!estimate || typeof estimate !== "object" || typeof estimate.known !== "boolean") throw new Error("The price check returned an incomplete result. Try again.");
+      if (estimate.market?.status === "unavailable") {
+        if (!item.estimate) { item.estimate = estimate; item.estimateFor = subject; }
+        const unavailable = new Error(estimate.summary || "The live price check is unavailable. Try again.");
+        unavailable.status = 503;
+        throw unavailable;
+      }
+      item.estimate = estimate;
+      item.estimateFor = subject;
+      item.pricingStatus = "complete";
+      item.pricingError = "";
+      await this.changed({ immediate: true });
+    } catch (error) {
+      if (!currentItem()) return;
+      if (controller.signal.aborted) { if (item.pricingStatus === "loading") item.pricingStatus = "paused"; }
+      else {
+        item.pricingStatus = "error";
+        item.pricingError = error.message || "This title’s price check was interrupted. Try again.";
+        if ([0, 401, 403, 408, 429, 503, 504].includes(error.status)) this.pausePricing({ notify: false });
+      }
+      this.changed({ immediate: true });
+    } finally {
+      if (this.pricingControllers.get(item.clientId) === controller) this.pricingControllers.delete(item.clientId);
+      this.emit();
+      this.pumpPricing();
+    }
   }
   async enrich() {
     if (this.enriching || this.saving) return;
@@ -393,7 +530,7 @@ export class ScanSession {
             const hit = results?.[index];
             if (!hit?.matched || item.title !== title || isItemSaved(item)) return;
             for (const field of ["director", "actors", "genre", "runtime", "rated", "plot", "imdbRating", "imdbId", "posterUrl"]) if (hit[field]) item[field] = hit[field];
-            item.year ||= hit.year;
+            if (!item.year && hit.year) { this.invalidatePricing(item); item.year = hit.year; }
             item.matched = true;
           });
         } catch {
@@ -417,10 +554,16 @@ export class ScanSession {
 
   async save(onCreated = () => {}) {
     if (this.saving) return { saved: 0 };
+    if (this.disposed || !this.accountMatches()) throw new Error("Your account changed. Reopen the scan before saving.");
+    if (this.draft.saveDestination && this.draft.saveDestination !== this.draft.destination) {
+      this.draft.destination = this.draft.saveDestination;
+      throw new Error("This batch already started saving to a destination. Retry there, or start a new batch for a different destination.");
+    }
     const chosen = this.draft.items.filter((i) => i.include !== false && !isItemSaved(i));
     if (!chosen.length) throw new Error("Choose at least one tape to save.");
     if (chosen.some(requiresReview)) throw new Error("Confirm or exclude the flagged titles before saving.");
-    if (this.draft.photos.some(requiresPhotoReview)) throw new Error("Check the photos with count differences and confirm every physical tape is accounted for.");
+    if (this.draft.photos.some((photo) => requiresPhotoReview(photo, this.draft.items))) throw new Error("Check the photos with count differences and confirm every physical tape is accounted for.");
+    this.pausePricing({ notify: false });
     this.saving = true;
     this.saveError = "";
     this.saveProgress = { done: 0, total: chosen.length };
@@ -428,7 +571,12 @@ export class ScanSession {
     let saved = 0;
     try {
       // Persist stable IDs BEFORE sending. A lost response can be retried safely.
-      if (!await this.persist()) throw new Error("Your draft could not be saved on this device. Free some device storage and retry; nothing has been sent.");
+      const previousDestination = this.draft.saveDestination;
+      this.draft.saveDestination = this.draft.destination;
+      if (!await this.persist()) {
+        this.draft.saveDestination = previousDestination;
+        throw new Error("Your draft could not be saved on this device. Free some device storage and retry; nothing has been sent.");
+      }
       if (this.draft.destination === "scout") {
         let savedList;
         for (let offset = 0; offset < chosen.length && !this.disposed; offset += 100) {
@@ -436,7 +584,11 @@ export class ScanSession {
           const { list } = await this.client.createScout({
             clientId: this.draft.id,
             name: this.draft.scoutName?.trim() || "Store visit",
-            items: chunk.map((item) => ({ ...item, location: this.draft.location || "", pricePaid: item.pricePaid ?? this.draft.pricePaid ?? null, priceAsking: item.priceAsking ?? this.draft.priceAsking ?? null })),
+            items: chunk.map((item) => ({
+              ...tapePayload(item, this.draft), artist: item.artist || "", photoId: item.photoId || "", sourceIndex: item.sourceIndex ?? null,
+              marker: normalizeMarker(item.marker), markerIssue: item.markerIssue || null, visual: item.visual || "", confidence: item.confidence || "manual",
+              ...(item.estimate ? { estimate: item.estimate, estimateFor: item.estimateFor || estimateSubject(item) } : {}),
+            })),
             photos: this.draft.photos.map(({ id, name }) => ({ id, name })),
           }, { expectedToken: this.expectedToken });
           if (this.disposed) break;

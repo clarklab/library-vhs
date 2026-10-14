@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mapWithConcurrency, sanitizeTape } from "./tape-batch.mjs";
-import { MEDIA_FORMATS, normalizeValue } from "./value-contract.mjs";
+import { MEDIA_FORMATS, storedValue, valueSubject } from "./value-contract.mjs";
 
 const CLIENT_ID = /^[A-Za-z0-9_-]{1,128}$/;
 export const MAX_SCOUT_ITEMS = 1000;
@@ -8,10 +8,7 @@ export class ScoutError extends Error {
   constructor(message, status = 400) { super(message); this.status = status; }
 }
 const text = (value, max = 200) => typeof value === "string" ? value.trim().slice(0, max) : "";
-const estimateSubject = (item) => JSON.stringify([
-  text(item.title, 300), item.year ?? null, item.format,
-  text(item.edition), text(item.artist),
-]);
+const estimateSubject = valueSubject;
 export const scoutKey = (userId, id) => `${userId}/${id}`;
 const idFor = (clientId) => `s_${createHash("sha256").update(clientId).digest("hex")}`;
 const assertClientId = (value) => {
@@ -30,12 +27,16 @@ export function sanitizeScoutInput(input) {
     if (!text(item.title, 300)) throw new ScoutError("Every item needs a title.");
     const tape = sanitizeTape(item);
     const format = MEDIA_FORMATS.includes(item.format) ? item.format : item.format === undefined ? "VHS" : "Other";
-    return {
+    const record = {
       ...tape, format, clientId: item.clientId, artist: text(item.artist),
       photoId: text(item.photoId, 128), sourceIndex: Number.isInteger(item.sourceIndex) ? item.sourceIndex : null,
       visual: text(item.visual), confidence: ["high", "medium", "low", "manual"].includes(item.confidence) ? item.confidence : "manual",
       estimate: null, purchasedTapeId: null,
+      marker: item.marker && Number.isFinite(item.marker.x) && Number.isFinite(item.marker.y) && item.marker.x >= 0 && item.marker.x <= 1 && item.marker.y >= 0 && item.marker.y <= 1 ? { x: item.marker.x, y: item.marker.y } : null,
+      markerIssue: ["unplaced", "overlap"].includes(item.markerIssue) ? item.markerIssue : null,
     };
+    if (item.estimate && estimateSubject(item.estimateFor) === estimateSubject(record)) record.estimate = storedValue(item.estimate);
+    return record;
   });
   const photos = (Array.isArray(input.photos) ? input.photos : []).slice(0, 100).flatMap((photo) => {
     const id = text(photo?.id, 128);
@@ -107,7 +108,7 @@ export async function patchScout({ store, tapeStore, userId, id, patch }) {
         throw new ScoutError("Include the identification used for this estimate.");
       }
       update.estimateFor = estimateSubject(input.estimateFor);
-      update.estimate = { ...normalizeValue(input.estimate), estimatedAt: new Date().toISOString() };
+      update.estimate = storedValue(input.estimate);
     }
     if (Object.hasOwn(input, "purchasedTapeId")) {
       const tapeId = text(input.purchasedTapeId, 128);

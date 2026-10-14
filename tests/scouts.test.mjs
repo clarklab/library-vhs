@@ -137,7 +137,7 @@ test("value requests carry the explicit physical format and cannot price unident
   const { createValueHandler } = await import("../netlify/functions/value.mjs");
   const calls = [];
   const handler = createValueHandler({ authenticate: async () => ({ userId: "owner" }), runStructured: async (call) => { calls.push(call); return estimate; } });
-  const request = (body) => new Request("https://example.test/api/value", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const request = (body) => new Request("https://example.test/api/value", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mode: "ai", ...body }) });
   const response = await handler(request({ title: "Album", artist: "An Artist", format: "CD" }));
   const result = await response.json();
   assert.equal(result.format, "CD");

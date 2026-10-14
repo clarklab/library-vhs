@@ -1,12 +1,13 @@
 import { api, getToken } from "./api.js";
 import { state, go, upsertTapes } from "./app.js";
-import { esc, money } from "./util.js";
+import { esc } from "./util.js";
+import { marketLabel, marketMeta, marketEvidence } from "./market-view.js";
+import { estimateSubject } from "./scan-session.js";
 import { icons } from "./icons.js";
 import { toast, confirmSheet, openSheet } from "./ui.js";
 import { soldListingUrl, scoutPurchasePayload } from "./scout-utils.js";
 
 const dateLabel = (value) => new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const priceLabel = (estimate) => estimate?.known ? `${money(estimate.low)}–${money(estimate.high)}` : estimate ? "Estimate unavailable" : "Not estimated";
 const isUnknown = (item) => !item.title?.trim() || /^(unknown|unreadable|unidentified)(\b|$)/i.test(item.title) || ["Other", "other", "unknown"].includes(item.format);
 const SCOUT_RENDER = Symbol("scout-render");
 
@@ -26,7 +27,7 @@ export async function renderScouts(root) {
     } else {
       const { lists } = await api.listScouts(requestOptions);
       if (!visible()) return;
-      root.innerHTML = `<div class="screen scouts-screen"><header class="scouts-header"><div><p class="eyebrow">SPOT THE FIND. MAKE THE CALL.</p><h1>Your scout lists<span class="accent-dot">.</span></h1><p>Keep shop visits and possible finds separate from the media you own.</p></div><button class="btn" data-scan>${icons.camera} Scout a shelf</button></header><div class="scout-disclaimer">AI estimates help decide what to inspect. They are not live sold prices or proof of rarity. Compare the exact format, edition and condition before buying.</div>${lists.length ? `<div class="scouts-grid">${lists.map((list) => `<button class="scout-list-card" data-open="${esc(list.id)}"><span class="eyebrow">${list.photoCount} SOURCE ${list.photoCount === 1 ? "PHOTO" : "PHOTOS"}</span><h2>${esc(list.name)}</h2><p>${list.itemCount} items <span>·</span> ${list.purchasedCount} collected</p><div class="scout-summary"><span>${list.worthCheckingCount} worth checking</span><span>${esc(dateLabel(list.updatedAt))} ↗</span></div></button>`).join("")}</div>` : `<section class="empty"><div class="empty-icon">${icons.camera}</div><h3>A good find starts here.</h3><p>Scan a shelf of VHS tapes, then save the review as a scout list. Your collection stays separate until you buy.</p><button class="btn" data-scan>Start scouting</button></section>`}</div>`;
+      root.innerHTML = `<div class="screen scouts-screen"><header class="scouts-header"><div><p class="eyebrow">SPOT THE FIND. MAKE THE CALL.</p><h1>Your scout lists<span class="accent-dot">.</span></h1><p>Keep shop visits and possible finds separate from the media you own.</p></div><button class="btn" data-scan>${icons.camera} Scout a shelf</button></header><div class="scout-disclaimer">Check current listings before you buy. Asking prices and sold evidence are labeled separately; match the format, edition and condition to the tape in your hand.</div>${lists.length ? `<div class="scouts-grid">${lists.map((list) => `<button class="scout-list-card" data-open="${esc(list.id)}"><span class="eyebrow">${list.photoCount} SOURCE ${list.photoCount === 1 ? "PHOTO" : "PHOTOS"}</span><h2>${esc(list.name)}</h2><p>${list.itemCount} items <span>·</span> ${list.purchasedCount} collected</p><div class="scout-summary"><span>${list.worthCheckingCount} worth checking</span><span>${esc(dateLabel(list.updatedAt))} ↗</span></div></button>`).join("")}</div>` : `<section class="empty"><div class="empty-icon">${icons.camera}</div><h3>A good find starts here.</h3><p>Scan a shelf of VHS tapes, then save the review as a scout list. Your collection stays separate until you buy.</p><button class="btn" data-scan>Start scouting</button></section>`}</div>`;
       root.querySelectorAll("[data-scan]").forEach((button) => button.addEventListener("click", () => go("scan", { destination: "scout" })));
       root.querySelectorAll("[data-open]").forEach((button) => button.addEventListener("click", () => go("scouts", button.dataset.open)));
     }
@@ -56,7 +57,7 @@ export async function renderScouts(root) {
         (filter !== "unbought" || !ownId(item))
       )).sort((a, b) => (photos.get(a.photoId) ?? 999) - (photos.get(b.photoId) ?? 999) || (a.sourceIndex || 0) - (b.sourceIndex || 0));
     };
-    root.innerHTML = `<div class="screen scouts-screen"><header class="scout-detail-header"><button class="btn gray" data-back>← Scout lists</button><div><p class="eyebrow">YOUR NEXT POSSIBLE FINDS</p><h1 data-title></h1><p data-list-summary></p></div><div class="scout-header-actions"><button class="btn gray" data-rename>Rename</button><button class="btn gray" data-delete>Delete list</button></div></header><div class="scout-disclaimer"><strong>AI estimates, not live comps.</strong> Prices are uncertain USD resale ranges before fees and shipping. “Worth checking” means an AI typical estimate of $20 or more; it does not establish rarity or a profitable buy. Source photo labels are saved; original photos remain in the scan draft on the capture device.</div><div class="scout-toolbar"><label class="searchbar">${icons.search}<input type="search" placeholder="Find a title, format or edition" aria-label="Search scout list" data-search /></label><select data-filter aria-label="Filter scout list"><option value="all">All finds</option><option value="check">Worth checking</option><option value="unbought">Not collected</option></select><button class="btn gray" data-select>Select visible</button></div><div class="scout-batch-actions"><span data-selected>0 selected</span><button class="btn gray" data-estimate disabled>${icons.sparkles} Estimate selected</button><button class="btn gray" data-stop-estimates hidden>Pause estimates</button><button class="btn" data-purchase disabled>${icons.plus} Add purchased to collection</button></div><p class="scout-status" data-status role="status" aria-live="polite"></p><div class="scout-items" data-items></div><button class="btn gray" data-more hidden>Show more items</button></div>`;
+    root.innerHTML = `<div class="screen scouts-screen"><header class="scout-detail-header"><button class="btn gray" data-back>← Scout lists</button><div><p class="eyebrow">YOUR NEXT POSSIBLE FINDS</p><h1 data-title></h1><p data-list-summary></p></div><div class="scout-header-actions"><button class="btn gray" data-rename>Rename</button><button class="btn gray" data-delete>Delete list</button></div></header><div class="scout-disclaimer"><strong>Prices with sources.</strong> Current web checks show matching listings, check dates and whether prices are asking or sold. Old AI estimates stay labeled. “Worth checking” is a price signal, not proof of rarity. Source photo labels are saved; original photos remain on the capture device.</div><div class="scout-toolbar"><label class="searchbar">${icons.search}<input type="search" placeholder="Find a title, format or edition" aria-label="Search scout list" data-search /></label><select data-filter aria-label="Filter scout list"><option value="all">All finds</option><option value="check">Worth checking</option><option value="unbought">Not collected</option></select><button class="btn gray" data-select>Select visible</button></div><div class="scout-batch-actions"><span data-selected>0 selected</span><button class="btn gray" data-estimate disabled>${icons.sparkles} Check selected prices</button><button class="btn gray" data-stop-estimates hidden>Pause checks</button><button class="btn" data-purchase disabled>${icons.plus} Add purchased to collection</button></div><p class="scout-status" data-status role="status" aria-live="polite"></p><div class="scout-items" data-items></div><button class="btn gray" data-more hidden>Show more items</button></div>`;
     root.querySelector("[data-back]").addEventListener("click", () => go("scouts"));
     root.querySelector("[data-search]").addEventListener("input", (event) => { query = event.target.value; limit = 40; paint(); });
     root.querySelector("[data-filter]").addEventListener("change", (event) => { filter = event.target.value; limit = 40; paint(); });
@@ -89,7 +90,7 @@ export async function renderScouts(root) {
     root.querySelector("[data-estimate]").addEventListener("click", () => estimate(list.items.filter((item) => selected.has(item.clientId))));
     root.querySelector("[data-stop-estimates]").addEventListener("click", () => {
       estimateController?.abort();
-      message = "Pausing estimates. Completed results are kept.";
+      message = "Pausing price checks. Completed results are kept.";
       paint();
     });
     root.querySelector("[data-purchase]").addEventListener("click", () => purchase(list.items.filter((item) => selected.has(item.clientId))));
@@ -106,14 +107,14 @@ export async function renderScouts(root) {
       root.querySelector("[data-select]").disabled = busy;
       root.querySelector("[data-rename]").disabled = busy;
       root.querySelector("[data-delete]").disabled = busy;
-      root.querySelector("[data-status]").textContent = message || "Select finds to estimate or add the ones you purchased.";
+      root.querySelector("[data-status]").textContent = message || "Select finds to check prices or add the ones you purchased.";
       const items = filteredItems();
       const photos = new Map((list.photos || []).map((photo, index) => [photo.id, { ...photo, index: index + 1 }]));
       root.querySelector("[data-items]").innerHTML = items.slice(0, limit).map((item) => {
         const owned = ownId(item);
         const photo = photos.get(item.photoId);
         const estimate = item.estimate;
-        return `<article class="scout-item${estimate?.worthChecking ? " scout-watch" : ""}"><label class="scout-item-select"><input type="checkbox" data-select-item="${esc(item.clientId)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.clientId) ? "checked" : ""} ${busy || owned ? "disabled" : ""} /></label><div class="scout-item-main"><div class="scout-item-meta"><span>${esc(item.format)}</span>${photo ? `<span>Photo ${photo.index}${item.sourceIndex ? ` · item ${item.sourceIndex}` : ""}</span>` : ""}${owned ? '<span class="scout-collected">In collection</span>' : ""}${estimate?.worthChecking ? '<span class="scout-check-label">Worth checking</span>' : ""}</div><h3>${esc(item.title)}${item.year ? ` <small>(${esc(item.year)})</small>` : ""}</h3>${item.artist || item.edition ? `<p>${esc([item.artist, item.edition].filter(Boolean).join(" · "))}</p>` : ""}${item.visual ? `<p class="scout-source-note">${esc(item.visual)}</p>` : ""}${estimate?.summary ? `<details class="scout-estimate-detail"><summary>Estimate notes</summary><p>${esc(estimate.summary)}</p>${estimate.factors?.length ? `<ul>${estimate.factors.map((factor) => `<li>${esc(factor)}</li>`).join("")}</ul>` : ""}<p>AI estimate · ${esc(dateLabel(estimate.estimatedAt))} · verify exact release</p></details>` : ""}${rowErrors.has(item.clientId) ? `<p class="scout-error" role="alert">${esc(rowErrors.get(item.clientId))}</p>` : ""}</div><div class="scout-item-value"><strong>${esc(priceLabel(estimate))}</strong><span>${estimate?.known ? `${money(estimate.typical)} typical · AI estimate` : "No verified sold price"}</span></div><div class="scout-item-actions"><button class="btn gray" data-edit-item="${esc(item.clientId)}" ${busy ? "disabled" : ""}>Edit</button><a class="btn gray" href="${esc(soldListingUrl(item))}" target="_blank" rel="noopener noreferrer">Sold listings ↗</a><button class="btn gray" data-estimate-item="${esc(item.clientId)}" ${busy || isUnknown(item) ? "disabled" : ""}>${estimate ? "Refresh estimate" : "AI estimate"}</button>${owned ? `<button class="btn gray" data-owned="${esc(owned)}">View in collection</button>${!item.purchasedTapeId ? `<button class="btn gray" data-purchase-item="${esc(item.clientId)}" ${busy ? "disabled" : ""}>Finish adding</button>` : ""}` : `<button class="btn gray" data-purchase-item="${esc(item.clientId)}" ${busy || isUnknown(item) ? "disabled" : ""}>I bought this</button>`}</div></article>`;
+        return `<article class="scout-item${estimate?.worthChecking ? " scout-watch" : ""}"><label class="scout-item-select"><input type="checkbox" data-select-item="${esc(item.clientId)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.clientId) ? "checked" : ""} ${busy || owned ? "disabled" : ""} /></label><div class="scout-item-main"><div class="scout-item-meta"><span>${esc(item.format)}</span>${photo ? `<span>Photo ${photo.index}${item.sourceIndex ? ` · item ${item.sourceIndex}` : ""}</span>` : ""}${owned ? '<span class="scout-collected">In collection</span>' : ""}${estimate?.worthChecking ? '<span class="scout-check-label">Worth checking</span>' : ""}</div><h3>${esc(item.title)}${item.year ? ` <small>(${esc(item.year)})</small>` : ""}</h3>${item.artist || item.edition ? `<p>${esc([item.artist, item.edition].filter(Boolean).join(" · "))}</p>` : ""}${item.visual ? `<p class="scout-source-note">${esc(item.visual)}</p>` : ""}${marketEvidence(estimate)}${rowErrors.has(item.clientId) ? `<p class="scout-error" role="alert">${esc(rowErrors.get(item.clientId))}</p>` : ""}</div><div class="scout-item-value"><strong>${esc(marketLabel(estimate))}</strong><span>${esc(marketMeta(estimate))}</span></div><div class="scout-item-actions"><button class="btn gray" data-edit-item="${esc(item.clientId)}" ${busy ? "disabled" : ""}>Edit</button><a class="btn gray" href="${esc(soldListingUrl(item))}" target="_blank" rel="noopener noreferrer">Sold listings ↗</a><button class="btn gray" data-estimate-item="${esc(item.clientId)}" ${busy || isUnknown(item) ? "disabled" : ""}>${estimate ? "Refresh prices" : "Check prices"}</button>${owned ? `<button class="btn gray" data-owned="${esc(owned)}">View in collection</button>${!item.purchasedTapeId ? `<button class="btn gray" data-purchase-item="${esc(item.clientId)}" ${busy ? "disabled" : ""}>Finish adding</button>` : ""}` : `<button class="btn gray" data-purchase-item="${esc(item.clientId)}" ${busy || isUnknown(item) ? "disabled" : ""}>I bought this</button>`}</div></article>`;
       }).join("") || '<p class="empty">No items match this filter.</p>';
       root.querySelector("[data-more]").hidden = items.length <= limit;
       root.querySelectorAll("[data-select-item]").forEach((input) => input.addEventListener("change", () => { input.checked ? selected.add(input.dataset.selectItem) : selected.delete(input.dataset.selectItem); paint(); }));
@@ -139,7 +140,7 @@ export async function renderScouts(root) {
             ({ list } = await api.updateScout(list.id, { items: [{ clientId: item.clientId, ...patch }] }, requestOptions));
             rowErrors.delete(item.clientId);
             close();
-            message = "Find updated. Request a new estimate when its title and format are identified.";
+            message = "Find updated. Check current prices when its title and format are identified.";
           } catch (error) {
             const notice = body.querySelector("[data-edit-error]");
             notice.textContent = error.message; notice.hidden = false;
@@ -167,7 +168,7 @@ export async function renderScouts(root) {
         for (const item of items) selected.add(item.clientId);
         let saved = 0;
         let failures = 0;
-        message = `Estimating ${items.length} items, two at a time. You can pause whenever you like.`;
+        message = `Checking current prices for ${items.length} items, two at a time. You can pause whenever you like.`;
         paint();
         try {
           for (let offset = 0; offset < items.length && visible() && !controller.signal.aborted; offset += 2) {
@@ -175,11 +176,12 @@ export async function renderScouts(root) {
             await Promise.all(items.slice(offset, offset + 2).map(async (item) => {
               rowErrors.delete(item.clientId);
               try {
-                if (isUnknown(item)) throw new Error("Identify the title and format before estimating this item.");
+                if (isUnknown(item)) throw new Error("Identify the title and format before checking prices.");
                 const value = await api.valueEstimate(item, { ...requestOptions, signal: controller.signal });
+                if (value.market?.status === "unavailable") throw new Error(value.summary || "The live price check is unavailable. Retry when the connection recovers.");
                 if (sameUser()) updates.push({
                   clientId: item.clientId, estimate: value,
-                  estimateFor: { title: item.title, year: item.year ?? null, format: item.format, edition: item.edition || "", artist: item.artist || "" },
+                  estimateFor: estimateSubject(item),
                 });
               } catch (error) {
                 if (controller.signal.aborted) return;

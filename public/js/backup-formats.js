@@ -1,3 +1,5 @@
+import { validMarketEstimate } from "./market-contract.js";
+
 // Portable account data and table conversion. No DOM or network dependencies.
 export const BACKUP_FORMAT = "tape-deck-account-backup";
 export const BACKUP_VERSION = 1;
@@ -5,9 +7,9 @@ export const TABLE_FORMAT = "tape-deck-table-v1";
 export const MAX_TABLE_ROWS = 10000;
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
-const limits = { title:300, director:300, genre:120, runtime:40, rated:20, plot:1200, imdbRating:10, imdbId:20, posterUrl:600, format:40, edition:200, label:120, packaging:40, acquiredDate:30, acquiredFrom:200, barcode:40, condition:40, status:40, soldDate:30, location:200, notes:2000, source:30 };
+const limits = { title:300, director:300, artist:200, genre:120, runtime:40, rated:20, plot:1200, imdbRating:10, imdbId:20, posterUrl:600, format:40, edition:200, label:120, packaging:40, acquiredDate:30, acquiredFrom:200, barcode:40, condition:40, status:40, soldDate:30, location:200, notes:2000, source:30 };
 export const COLUMNS = [
-  ["title","Title"], ["format","Format"], ["year","Year"], ["director","Director"], ["actors","Actors"], ["genre","Genre"], ["runtime","Runtime"], ["rated","Rated"], ["plot","Plot"], ["imdbRating","IMDb Rating"], ["imdbId","IMDb ID"], ["posterUrl","Cover URL"], ["edition","Edition"], ["label","Studio/Label"], ["packaging","Packaging"], ["sealed","Sealed"], ["condition","Condition"], ["status","Status"], ["pricePaid","Price Paid"], ["priceAsking","Asking Price"], ["priceSold","Sold Price"], ["soldDate","Sold Date"], ["location","Location"], ["acquiredFrom","Where Acquired"], ["acquiredDate","Date Acquired"], ["barcode","Barcode"], ["notes","Notes"], ["tags","Tags"], ["source","Source"], ["createdAt","Created At"], ["updatedAt","Updated At"], ["id","Record ID"], ["clientId","Client ID"], ["_sourceAccountId","Source Account ID"], ["_tableFormat","Export Format"],
+  ["title","Title"], ["format","Format"], ["year","Year"], ["director","Director"], ["artist","Artist"], ["actors","Actors"], ["genre","Genre"], ["runtime","Runtime"], ["rated","Rated"], ["plot","Plot"], ["imdbRating","IMDb Rating"], ["imdbId","IMDb ID"], ["posterUrl","Cover URL"], ["edition","Edition"], ["label","Studio/Label"], ["packaging","Packaging"], ["sealed","Sealed"], ["condition","Condition"], ["status","Status"], ["pricePaid","Price Paid"], ["priceAsking","Asking Price"], ["priceSold","Sold Price"], ["soldDate","Sold Date"], ["location","Location"], ["acquiredFrom","Where Acquired"], ["acquiredDate","Date Acquired"], ["barcode","Barcode"], ["notes","Notes"], ["tags","Tags"], ["source","Source"], ["estimate","Saved Price Evidence"], ["createdAt","Created At"], ["updatedAt","Updated At"], ["id","Record ID"], ["clientId","Client ID"], ["_sourceAccountId","Source Account ID"], ["_tableFormat","Export Format"],
 ];
 const tapeFields = new Set(COLUMNS.map(([key]) => key).filter((key) => !key.startsWith("_")));
 const normalizeHeader = (value) => String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -22,7 +24,7 @@ export function collectionTable(tapes, { accountId = "tabular-import" } = {}) {
     if (key === "_sourceAccountId") return accountId;
     if (key === "_tableFormat") return TABLE_FORMAT;
     const value = tape[key];
-    return Array.isArray(value) ? JSON.stringify(value) : value ?? "";
+    return value && typeof value === "object" ? JSON.stringify(value) : value ?? "";
   }))];
 }
 
@@ -63,8 +65,23 @@ export function parseDelimited(text) {
   return rows;
 }
 
+function validEstimate(estimate) {
+  if (!estimate || typeof estimate !== "object" || Array.isArray(estimate)) return false;
+  const fields = ["known","low","high","typical","demand","factors","summary","source","currency","liveComps","worthChecking","estimatedAt","market"];
+  let valid = Object.keys(estimate).every((key) => fields.includes(key));
+  valid &&= ["known","liveComps","worthChecking"].every((key) => typeof estimate[key] === "boolean") && estimate.currency === "USD";
+  valid &&= estimate.source === "live_web_search" ? validMarketEstimate(estimate) : estimate.source === "ai_estimate" && estimate.liveComps === false && estimate.market === undefined;
+  valid &&= ["low","high","typical"].every((key) => estimate[key] === null || (typeof estimate[key] === "number" && Number.isFinite(estimate[key]) && estimate[key] >= 0 && estimate[key] <= 1000000));
+  valid &&= ["hot","steady","slow"].includes(estimate.demand) && Array.isArray(estimate.factors) && estimate.factors.length <= 4 && estimate.factors.every((factor) => typeof factor === "string" && factor.length <= 200) && typeof estimate.summary === "string" && estimate.summary.length <= 500;
+  valid &&= estimate.known ? estimate.low !== null && estimate.typical !== null && estimate.high !== null && estimate.low <= estimate.typical && estimate.typical <= estimate.high : [estimate.low,estimate.typical,estimate.high].every((value) => value === null);
+  valid &&= estimate.worthChecking === (estimate.known && estimate.typical >= 20);
+  valid &&= estimate.estimatedAt === undefined || (ISO.test(estimate.estimatedAt) && Number.isFinite(Date.parse(estimate.estimatedAt)));
+  return valid;
+}
+
 function fieldErrors(record, issues, row, { scout = false } = {}) {
-  const extra = scout ? new Set(["artist","photoId","sourceIndex","visual","confidence","estimate","purchasedTapeId"]) : new Set();
+  if (record.estimate !== undefined && record.estimate !== null && !validEstimate(record.estimate)) issue(issues,"A saved price estimate or listing evidence is invalid. Its original data has not been changed.",row);
+  const extra = scout ? new Set(["photoId","sourceIndex","visual","confidence","purchasedTapeId","marker","markerIssue"]) : new Set();
   for (const key of Object.keys(record)) if (!tapeFields.has(key) && !extra.has(key)) issue(issues, `Unsupported field “${key}”.`, row);
   if (typeof record.title !== "string" || !record.title.trim()) issue(issues,"A title is required.",row);
   for (const [key,max] of Object.entries(limits)) if (record[key] !== undefined && (typeof record[key] !== "string" || record[key].length > max)) issue(issues,`${key} must be text up to ${max} characters.`,row);
@@ -108,6 +125,9 @@ export async function tableToBackup(rows, { csv = false, extraIssues = [] } = {}
         if ([true,"true","yes","1",1].includes(typeof v === "string" ? v.toLowerCase() : v)) record[key] = true;
         else if ([false,"false","no","0",0].includes(typeof v === "string" ? v.toLowerCase() : v)) record[key] = false;
         else issue(issues,"Sealed must be yes/no or true/false.",row);
+      } else if (key === "estimate") {
+        try { record[key] = typeof v === "object" ? v : JSON.parse(v); }
+        catch { issue(issues,"Saved Price Evidence must contain valid JSON, or be blank.",row); }
       } else if (["actors","tags"].includes(key)) {
         try { record[key] = Array.isArray(v) ? v : String(v).trim().startsWith("[") ? JSON.parse(v) : String(v).split(";").map((item) => item.trim()).filter(Boolean); }
         catch { issue(issues,`${key} contains an invalid JSON list.`,row); }
@@ -184,17 +204,8 @@ export async function validateBackup(input) {
       if (item.confidence !== undefined && !["high","medium","low","manual"].includes(item.confidence)) issue(issues,"Invalid scout confidence.",label);
       if (item.sourceIndex !== undefined && item.sourceIndex !== null && (!Number.isInteger(item.sourceIndex) || item.sourceIndex < 0 || item.sourceIndex > 1000)) issue(issues,"Invalid source-photo position.",label);
       if (item.purchasedTapeId !== undefined && item.purchasedTapeId !== null && (typeof item.purchasedTapeId !== "string" || !ID.test(item.purchasedTapeId))) issue(issues,"Invalid purchased record ID.",label);
-      if (item.estimate !== undefined && item.estimate !== null) {
-        const estimate = item.estimate, fields = ["known","low","high","typical","demand","factors","summary","source","currency","liveComps","worthChecking","estimatedAt"];
-        let valid = typeof estimate === "object" && !Array.isArray(estimate) && Object.keys(estimate).every((key) => fields.includes(key));
-        valid &&= ["known","liveComps","worthChecking"].every((key) => typeof estimate[key] === "boolean") && estimate.source === "ai_estimate" && estimate.currency === "USD" && estimate.liveComps === false;
-        valid &&= ["low","high","typical"].every((key) => estimate[key] === null || (typeof estimate[key] === "number" && Number.isFinite(estimate[key]) && estimate[key] >= 0 && estimate[key] <= 1000000));
-        valid &&= ["hot","steady","slow"].includes(estimate.demand) && Array.isArray(estimate.factors) && estimate.factors.length <= 4 && estimate.factors.every((factor) => typeof factor === "string" && factor.length <= 200) && typeof estimate.summary === "string" && estimate.summary.length <= 500;
-        valid &&= estimate.known ? estimate.low !== null && estimate.typical !== null && estimate.high !== null && estimate.low <= estimate.typical && estimate.typical <= estimate.high : [estimate.low,estimate.typical,estimate.high].every((value) => value === null);
-        valid &&= estimate.worthChecking === (estimate.known && estimate.typical >= 20);
-        valid &&= estimate.estimatedAt === undefined || (ISO.test(estimate.estimatedAt) && Number.isFinite(Date.parse(estimate.estimatedAt)));
-        if (!valid) issue(issues,"A saved price estimate is invalid. Its original data has not been changed.",label);
-      }
+      if (item.marker !== undefined && item.marker !== null && (!item.marker || typeof item.marker !== "object" || Object.keys(item.marker).some((key) => !["x","y"].includes(key)) || ![item.marker.x,item.marker.y].every((coordinate) => Number.isFinite(coordinate) && coordinate >= 0 && coordinate <= 1))) issue(issues,"Invalid tape marker coordinates.",label);
+      if (item.markerIssue !== undefined && ![null,"unplaced","overlap"].includes(item.markerIssue)) issue(issues,"Invalid tape marker status.",label);
     }
   }
   for (const cover of input.covers) {

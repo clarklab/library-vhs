@@ -1,10 +1,11 @@
 import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
 import { structured, aiErrorResponse, MODEL } from "../lib/ai.mjs";
 import { MEDIA_FORMATS, VALUE_SCHEMA, VALUE_SYSTEM, normalizeValue } from "../lib/value-contract.mjs";
+import { liveMarketValue } from "../lib/market.mjs";
 
 export const config = { path: "/api/value" };
 
-export function createValueHandler({ authenticate = requireAuth, runStructured = structured } = {}) {
+export function createValueHandler({ authenticate = requireAuth, runStructured = structured, runMarket = liveMarketValue } = {}) {
   return async (req) => {
     if (req.method !== "POST") return errorResponse("Not found", 404);
     try {
@@ -23,6 +24,9 @@ export function createValueHandler({ authenticate = requireAuth, runStructured =
         sealed: body.sealed === true ? true : body.sealed === false ? false : null,
         condition: str(body.condition, 20) || "unknown",
       };
+      if (body.mode !== "ai") {
+        return json({ ...await runMarket(detail, { signal: req.signal }), format }, 200, { "cache-control": "no-store" });
+      }
       const result = await runStructured({
         system: VALUE_SYSTEM,
         content: [{ type: "text", text: `Provide an uncertain AI resale estimate for this physical media item:\n${JSON.stringify(detail)}` }],

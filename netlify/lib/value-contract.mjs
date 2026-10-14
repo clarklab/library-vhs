@@ -1,3 +1,5 @@
+import { normalizeMarketValue, validMarketEstimate } from "./market-contract.mjs";
+
 export const MEDIA_FORMATS = ["VHS", "DVD", "CD", "Blu-ray", "Other"];
 export const VALUE_SCHEMA = {
   type: "object",
@@ -21,6 +23,7 @@ When evidence is insufficient for a grounded estimate (especially unknown format
 All prices are uncertain AI estimates for triage, not an appraisal or a buying recommendation. Encourage matching the exact format, edition, condition and catalog number against completed sold listings.`;
 
 export function normalizeValue(result) {
+  if (result?.source === "live_web_search") return normalizeMarketValue(result);
   const num = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1000000 ? Math.round(value * 100) / 100 : null;
   const low = num(result?.low), high = num(result?.high), typical = num(result?.typical);
   const known = result?.known === true && low !== null && high !== null && typical !== null && low <= typical && typical <= high;
@@ -32,4 +35,21 @@ export function normalizeValue(result) {
     source: "ai_estimate", currency: "USD", liveComps: false,
     worthChecking: known && typical >= 20,
   };
+}
+
+/** Identity/condition snapshot used to reject a late price for an edited item. */
+export function valueSubject(item = {}) {
+  if (!item || typeof item !== "object") item = {};
+  const str = (value) => typeof value === "string" ? value.trim() : "";
+  return JSON.stringify([
+    str(item.title), item.year === null || item.year === "" || item.year === undefined ? null : Number(item.year),
+    str(item.format) || "VHS", str(item.edition), str(item.artist), str(item.condition),
+    item.sealed === true, str(item.packaging), str(item.barcode),
+  ]);
+}
+
+export function storedValue(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.source === "live_web_search" && !validMarketEstimate(value)) return null;
+  return { ...normalizeValue(value), estimatedAt: typeof value.estimatedAt === "string" && Number.isFinite(Date.parse(value.estimatedAt)) ? value.estimatedAt : new Date().toISOString() };
 }

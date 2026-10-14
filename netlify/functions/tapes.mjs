@@ -1,6 +1,7 @@
 import { tapesStore, coversStore, json, errorResponse, requireAuth, newId, readBody } from "../lib/util.mjs";
 
-import { MAX_TAPES_PER_BATCH, mapWithConcurrency, sanitizeTape, saveTapeBatch } from "../lib/tape-batch.mjs";
+import { MAX_TAPES_PER_BATCH, mapWithConcurrency, saveTapeBatch } from "../lib/tape-batch.mjs";
+import { updateTapeRecord } from "../lib/tape-update.mjs";
 
 export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
 
@@ -17,6 +18,7 @@ export default async (req, context) => {
     if (req.method === "DELETE" && id) return await deleteTape(auth, id);
     return errorResponse("Not found", 404);
   } catch (err) {
+    if ([400, 404, 409, 503].includes(err.status)) return errorResponse(err.message, err.status);
     console.error("tapes error:", err);
     return errorResponse("Something went wrong. Please try again.", 500);
   }
@@ -59,22 +61,7 @@ async function createTapes(req, auth) {
 }
 
 async function updateTape(req, auth, id) {
-  const store = tapesStore();
-  const key = `${auth.userId}/${id}`;
-  const existing = await store.get(key, { type: "json" });
-  if (!existing) return errorResponse("Tape not found.", 404);
-
-  const body = await readBody(req);
-  const patch = sanitizeTape(body, true);
-  const updated = {
-    ...existing,
-    ...patch,
-    id: existing.id,
-    createdAt: existing.createdAt,
-    updatedAt: new Date().toISOString(),
-  };
-  if (!updated.title) return errorResponse("A tape needs a title.");
-  await store.setJSON(key, updated);
+  const updated = await updateTapeRecord({ store: tapesStore(), key: `${auth.userId}/${id}`, input: await readBody(req) });
   return json({ tape: updated });
 }
 

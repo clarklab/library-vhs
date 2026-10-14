@@ -6,6 +6,10 @@ export function soldListingUrl(item) {
 export function scoutPurchasePayload(item) {
   // clientId follows the physical item from scan -> scout -> owned collection.
   // Repeating this action after a network interruption acknowledges that record.
-  const { estimate, purchasedTapeId, photoId, sourceIndex, visual, confidence, ...tape } = item;
-  return { ...tape, clientId: item.clientId, source: "scout", status: "keep" };
+  const { estimate, estimateFor, purchasedTapeId, photoId, sourceIndex, visual, confidence, marker, markerIssue, ...tape } = item;
+  const snapshot = Object.fromEntries(["title", "year", "format", "edition", "artist", "condition", "sealed", "packaging", "barcode"].map((key) => [key, item[key]]));
+  return {
+    ...tape, clientId: item.clientId, source: "scout", status: "keep",
+    ...(["ai_estimate", "live_web_search"].includes(estimate?.source) ? { estimate, estimateFor: snapshot } : {}),
+  };
 }

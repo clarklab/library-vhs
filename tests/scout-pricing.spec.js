@@ -149,7 +149,7 @@ test("an edited Unknown scout find becomes priceable without changing its physic
   await page.locator("[data-edit-item]").click();
   await form.locator("[name=edition]").fill("Different printing");
   await form.locator("[type=submit]").click();
-  await expect(page.locator(".scout-item-value strong")).toHaveText("Not estimated");
+  await expect(page.locator(".scout-item-value strong")).toHaveText("Not checked");
   expect(fixture.getList().items[0].estimate).toBeNull();
   expect(fixture.errors).toEqual([]);
 });

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ScanSession, duplicateWarnings, requiresReview, requiresPhotoReview, sessionSummary, tapePayload } from "../public/js/scan-session.js";
+import { ScanSession, duplicateWarnings, requiresReview, requiresPhotoReview, photoCountMismatch, sessionSummary, tapePayload } from "../public/js/scan-session.js";
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -286,4 +286,155 @@ test("an explicit new batch honors its requested destination without changing th
   session.clear({ destination: "invalid-destination" });
   assert.equal(session.draft.destination, "scout");
   session.dispose();
+});
+
+const livePrice = (price = 10, patch = {}) => ({ known: true, low: price, high: price + 5, typical: price, source: "live_web_search", currency: "USD", market: { status: "available", basis: "asking", sampleCount: 1, listings: [{ title: "Listing", url: "https://example.com/listing", price, kind: "asking" }] }, ...patch });
+
+test("live price checks are explicit, stay at two concurrent requests, persist incrementally, and skip excluded/unidentified copies", async () => {
+  const requests = [];
+  const { session, writes } = fixture({ valueEstimate: (subject, options) => { const job = deferred(); requests.push({ ...job, subject, options }); return job.promise; } });
+  session.draft.items = [tape("A"),tape("B"),tape("C"),tape("Unknown tape"),tape("Excluded",{include:false}),tape("No format",{format:"unknown"})];
+  assert.equal(requests.length,0);
+  assert.deepEqual(session.priceAll(),{queued:3,skipped:3});
+  assert.equal(requests.length,2); assert.equal(session.pricingSummary().active,2); assert.equal(session.pricingSummary().queued,1);
+  requests[0].resolve(livePrice(12)); await until(() => requests.length === 3);
+  assert.equal(session.draft.items[0].estimate.typical,12); assert.equal(session.pricingSummary().completed,1);
+  requests[1].reject(new Error("Network interrupted")); requests[2].resolve(livePrice(20)); await until(() => session.pricingControllers.size === 0);
+  assert.equal(session.pricingSummary().errors,1); assert.equal(session.pricingSummary().completed,2);
+  assert.ok(writes.some((draft) => draft.items[0].estimate?.typical === 12));
+  assert.deepEqual(session.priceAll(),{queued:1,skipped:5}); assert.equal(requests.length,4);
+  requests[3].resolve(livePrice(15)); await until(() => session.pricingControllers.size === 0);
+  assert.equal(session.pricingSummary().completed,3); session.dispose();
+});
+
+test("correcting a tape cancels its old price check and stale results cannot price the corrected title", async () => {
+  const requests = [];
+  const { session } = fixture({ valueEstimate: (subject,options) => { const job = deferred(); requests.push({...job,subject,options}); return job.promise; } });
+  session.draft.items = [tape("Wrong title",{clientId:"physical-copy",marker:{x:.2,y:.3},estimate:livePrice(99),pricingStatus:"complete"})];
+  session.requestPricing("physical-copy",{refresh:true}); session.updateItem("physical-copy",{title:"Correct title"});
+  assert.equal(requests[0].options.signal.aborted,true); assert.equal(session.draft.items[0].estimate,null); assert.deepEqual(session.draft.items[0].marker,{x:.2,y:.3});
+  session.requestPricing("physical-copy"); requests[0].resolve(livePrice(999)); await until(() => requests.length === 2);
+  assert.equal(session.draft.items[0].estimate,null); assert.equal(requests[1].subject.title,"Correct title");
+  requests[1].resolve(livePrice(5)); await until(() => session.pricingControllers.size === 0); assert.equal(session.draft.items[0].estimate.typical,5);
+  session.updateItem("physical-copy",{edition:"New edition"}); assert.equal(session.draft.items[0].estimate,null); session.dispose();
+});
+
+test("route pause persists price progress and reload resumes only through an explicit price action", async () => {
+  const requests = [];
+  const { session } = fixture({ valueEstimate: (subject,{signal}) => { const job = deferred(); signal.addEventListener("abort",() => job.reject(new DOMException("paused","AbortError"))); requests.push(job); return job.promise; } });
+  session.draft.items = [tape("A"),tape("B"),tape("C")]; session.priceAll(); requests[0].resolve(livePrice()); await until(() => requests.length === 3);
+  session.pause(); await until(() => session.pricingControllers.size === 0);
+  assert.equal(session.draft.items[0].pricingStatus,"complete"); assert.equal(session.draft.items[1].pricingStatus,"paused");
+  const stored = structuredClone(session.draft); session.dispose(); let calls = 0;
+  const recovered = fixture({ valueEstimate: async () => { calls++; return livePrice(); } },stored).session;
+  recovered.resume(); await tick(); assert.equal(calls,0,"Resuming photo reading never spends on pricing automatically");
+  assert.deepEqual(recovered.priceAll(),{queued:2,skipped:1}); await until(() => recovered.pricingControllers.size === 0); assert.equal(calls,2); recovered.dispose();
+});
+
+test("removing a photo or clearing the batch discards late price results without changing the next batch", async () => {
+  const requests = [];
+  const { session } = fixture({ valueEstimate: (_subject,options) => { const job = deferred(); requests.push({...job,options}); return job.promise; } });
+  photos(session,1); session.draft.items = [tape("Old",{photoId:"p-0"})]; session.priceAll(); session.removePhoto("p-0");
+  assert.equal(requests[0].options.signal.aborted,true); requests[0].resolve(livePrice(99)); await until(() => session.pricingControllers.size === 0); assert.equal(session.draft.items.length,0);
+  session.draft.items = [tape("Other old")]; session.priceAll(); session.clear(); session.draft.items = [tape("New")]; session.priceAll();
+  requests[1].resolve(livePrice(88)); await tick(); assert.equal(session.draft.items[0].estimate,undefined);
+  requests[2].resolve(livePrice(3)); await until(() => session.pricingControllers.size === 0); assert.equal(session.draft.items[0].estimate.typical,3); session.dispose();
+});
+
+test("pricing carries the pinned account and ignores late results after the account changes", async () => {
+  const previous = globalThis.localStorage; let token = "owner-one"; const job = deferred(); let options;
+  globalThis.localStorage = {getItem:() => token};
+  try {
+    const { session } = fixture({valueEstimate:(_subject,opts) => { options = opts; return job.promise; }}); session.draft.items = [tape("A")]; session.priceAll();
+    assert.equal(options.expectedToken,"owner-one"); token = "owner-two"; job.resolve(livePrice()); await until(() => session.pricingControllers.size === 0);
+    assert.equal(session.draft.items[0].estimate,undefined); assert.equal(session.priceAll().queued,0); session.dispose();
+  } finally { if (previous === undefined) delete globalThis.localStorage; else globalThis.localStorage = previous; }
+});
+
+test("spatial markers, independent positions and manual moves survive verification and reload without leaking scan fields into collection payloads", async () => {
+  const positions = [{sourceIndex:1,label:"Counted tape",marker:{x:.2,y:.3},markerIssue:null}], options = [];
+  const { session } = fixture({scanPhoto:async (_image,opts) => { options.push(opts); return options.length === 1 ? response("First",{tapes:[tape("First",{marker:{x:.2,y:.3},sourceIndex:1})],needsVerification:true,verification:{status:"matched",countedCount:1,listedCount:1,uncertainCount:0,positions}}) : response("Corrected",{tapes:[tape("Corrected",{sourceIndex:1,marker:null})],coverage:{markedCount:0,unplacedCount:1,overlapCount:0},verification:{status:"matched",countedCount:1,listedCount:1,uncertainCount:0,positions}}); }});
+  photos(session,1); session.resume(); await until(() => session.controllers.size === 0);
+  assert.deepEqual(options[1].verificationContext.countPositions,positions); assert.equal(session.draft.items[0].marker,null,"A verifier’s row order is not a stable physical identity; never borrow an old point"); assert.equal(requiresPhotoReview(session.draft.photos[0]),true);
+  const item = session.draft.items[0]; session.updateItem(item.clientId,{marker:{x:.7,y:.8}}); assert.equal(item.markerIssue,null);
+  const manual = session.addManual("Missed spine","p-0",{x:.9,y:.4}); assert.deepEqual(manual.marker,{x:.9,y:.4});
+  session.updateItem(item.clientId,{marker:{x:2,y:.5}}); assert.equal(item.marker,null); assert.equal(item.markerIssue,"unplaced");
+  const saved = structuredClone(session.draft); session.dispose(); const restored = fixture({},saved).session; assert.deepEqual(restored.draft.items[1].marker,{x:.9,y:.4});
+  const payload = tapePayload(restored.draft.items[1],restored.draft); assert.equal("marker" in payload,false); assert.equal("pricingStatus" in payload,false); restored.dispose();
+});
+
+test("an ambiguous save response locks the chosen destination for safe retries", async () => {
+  const { session } = fixture({createTapes:async () => { throw new Error("Response lost"); },createScout:async () => assert.fail("Do not switch destinations after a possible write")}); session.draft.items = [tape()];
+  await assert.rejects(session.save(),/Response lost/); assert.equal(session.draft.saveDestination,"collection"); session.draft.destination = "scout";
+  await assert.rejects(session.save(),/already started saving/); assert.equal(session.draft.destination,"collection"); session.dispose();
+});
+
+test("manual additions, exclusions and missing marker edits reopen photo coverage even after a matched count", async () => {
+  const { session } = fixture({scanPhoto:async () => response("Original"),createTapes:async () => assert.fail("Unreviewed changes must not save")}); photos(session,1); session.resume(); await until(() => session.controllers.size === 0);
+  const photo = session.draft.photos[0]; assert.equal(requiresPhotoReview(photo),false);
+  const added = session.addManual("Missed physical tape",photo.id,{x:.5,y:.5}); assert.equal(requiresPhotoReview(photo),true); await assert.rejects(session.save(),/count differences/);
+  session.confirmPhoto(photo.id,true); session.updateItem(added.clientId,{include:false}); assert.equal(requiresPhotoReview(photo),true);
+  session.confirmPhoto(photo.id,true); session.updateItem(session.draft.items[0].clientId,{marker:null}); assert.equal(requiresPhotoReview(photo),true); session.dispose();
+});
+
+test("a manual title added during reading remains a coverage save gate after the AI finishes", async () => {
+  const reading = deferred();
+  let saves = 0;
+  const { session } = fixture({
+    scanPhoto: () => reading.promise,
+    createTapes: async (items) => { saves++; return { tapes: items.map((item) => ({ ...item, id: `stored-${item.clientId}` })) }; },
+  });
+  photos(session, 1);
+  session.resume();
+  const photo = session.draft.photos[0];
+  session.addManual("Manual title", photo.id, { x: .8, y: .8 });
+  // A premature check cannot approve titles that have not arrived yet.
+  session.confirmPhoto(photo.id, true);
+  reading.resolve(response("Detected title", { tapes: [tape("Detected title", { marker: { x: .2, y: .2 } })] }));
+  await until(() => session.controllers.size === 0);
+  assert.equal(session.draft.items.length, 2);
+  assert.equal(photoCountMismatch(photo, session.draft.items), true);
+  assert.equal(photo.needsPhotoReview, true);
+  assert.equal(photo.reviewed, false);
+  assert.equal(sessionSummary(session.draft).photoReviews, 1);
+  await assert.rejects(session.save(), /count differences/);
+  assert.equal(saves, 0);
+  session.confirmPhoto(photo.id, true);
+  assert.equal(sessionSummary(session.draft).photoReviews, 0);
+  assert.equal((await session.save()).saved, 2);
+  session.dispose();
+});
+
+test("restored count mismatches gate saving even when an older draft has no coverage flag", async () => {
+  const { session } = fixture({ createTapes: async () => assert.fail("Unreviewed restored coverage must not save") }, {
+    userId: "user-a", id: "existing-batch", destination: "collection", photos: [{ id: "p", status: "complete", image: "photo", verification: { status: "matched", countedCount: 1 }, needsPhotoReview: false, reviewed: false }],
+    items: [tape("Detected", { photoId: "p" }), tape("Manually added", { photoId: "p" })],
+  });
+  const photo = session.draft.photos[0];
+  assert.equal(photoCountMismatch(photo, session.draft.items), true);
+  assert.equal(requiresPhotoReview(photo, session.draft.items), true);
+  assert.equal(sessionSummary(session.draft).photoReviews, 1);
+  await assert.rejects(session.save(), /count differences/);
+  session.confirmPhoto(photo.id, true);
+  assert.equal(requiresPhotoReview(photo, session.draft.items), false);
+  session.dispose();
+});
+
+test("an unavailable live refresh retains prior successful prices, and saves include the matching pricing snapshot", async () => {
+  const { session } = fixture({valueEstimate:async () => livePrice(0,{known:false,market:{status:"unavailable"},summary:"Temporarily unavailable"})});
+  session.draft.items = [tape("A",{estimate:livePrice(15),pricingStatus:"complete"})]; session.priceAll({refresh:true}); await until(() => session.pricingControllers.size === 0);
+  assert.equal(session.draft.items[0].estimate.typical,15); assert.equal(session.draft.items[0].pricingStatus,"error"); assert.match(session.draft.items[0].pricingError,/Temporarily/);
+  const payload = tapePayload(session.draft.items[0],session.draft); assert.equal(payload.estimate.typical,15); assert.equal(payload.estimateFor.title,"A"); session.dispose();
+});
+
+test("a pricing rate limit stops the remaining queue for an explicit retry", async () => {
+  let calls = 0;
+  const { session } = fixture({ valueEstimate: async (_subject,{signal}) => {
+    calls++;
+    if (calls === 1) { const error = new Error("Wait before checking more prices"); error.status = 429; throw error; }
+    return new Promise((_resolve,reject) => signal.addEventListener("abort",() => reject(new DOMException("paused","AbortError"))));
+  } });
+  session.draft.items = Array.from({length:8},(_,index) => tape(`Tape ${index}`)); session.priceAll();
+  await until(() => session.pricingControllers.size === 0);
+  assert.equal(calls,2); assert.equal(session.pricingPaused,true); assert.equal(session.pricingSummary().errors,1); assert.equal(session.pricingSummary().paused,7); session.dispose();
 });

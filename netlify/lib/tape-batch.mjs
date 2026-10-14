@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { storedValue, valueSubject } from "./value-contract.mjs";
 
 const CONDITIONS = ["sealed", "mint", "good", "fair", "poor"];
 const STATUSES = ["available", "sold", "hold", "keep"];
@@ -123,6 +124,7 @@ export function sanitizeTape(input, partial = false) {
       return n && n > 1880 && n < 2100 ? Math.round(n) : null;
     },
     director: (v) => str(v, 300),
+    artist: (v) => str(v, 200),
     actors: (v) => (Array.isArray(v) ? v.map((a) => str(a, 120)).filter(Boolean).slice(0, 12) : []),
     genre: (v) => str(v, 120),
     runtime: (v) => str(v, 40),
@@ -155,11 +157,13 @@ export function sanitizeTape(input, partial = false) {
     notes: (v) => str(v, 2000),
     tags: (v) => (Array.isArray(v) ? v.map((t) => str(t, 40)).filter(Boolean).slice(0, 20) : []),
     source: (v) => str(v, 30),
+    estimate: storedValue,
   };
 
   for (const [field, coerce] of Object.entries(fields)) {
     if (partial && !(field in input)) continue;
     out[field] = coerce(input[field]);
   }
+  if (!partial && out.estimate && valueSubject(input.estimateFor) !== valueSubject(out)) out.estimate = null;
   return out;
 }

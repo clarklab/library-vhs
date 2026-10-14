@@ -1,11 +1,12 @@
 // Inspect a stored source photo without changing its pixels or provider payload.
 import { openSheet } from "./ui.js";
 import { esc } from "./util.js";
+import { drawPins, tapePins, countPins, rotatePoint } from "./photo-markers.js";
 
-export function openPhotoPreview({ photo, number, titles = [] }) {
+export function openPhotoPreview({ photo, number, titles = [], compareCount = false, onSelect, onPlace }) {
   let observer;
   let closed = false;
-  const { body, sheet } = openSheet({
+  const { body, sheet, close } = openSheet({
     title: `Photo ${number} · ${titles.length} titles`,
     content: `<div class="scan-source-preview">
       <div class="scan-photo-tools" role="group" aria-label="Photo inspection tools">
@@ -17,11 +18,11 @@ export function openPhotoPreview({ photo, number, titles = [] }) {
         <button class="btn gray" type="button" data-fit-photo aria-label="Fit photo to view">Fit</button>
       </div>
       <div class="scan-photo-viewport" data-photo-viewport tabindex="0" role="region" aria-label="Source photo. Scroll or use arrow keys to inspect enlarged details.">
-        <div class="scan-photo-stage" data-photo-stage><img class="scan-photo-image" data-photo-image src="${photo.image}" alt="Photo ${number}: ${esc(photo.name)}" draggable="false" /></div>
+        <div class="scan-photo-stage" data-photo-stage><img class="scan-photo-image" data-photo-image src="${photo.image}" alt="Photo ${number}: ${esc(photo.name)}" draggable="false" /><div class="scan-preview-pin-layer" data-preview-pins></div></div>
       </div>
       <p class="hint">Rotate to read sideways spines. Zoom in, then scroll to inspect each tape. These controls only change your view.</p>
-      <p class="hint">Compare the photo with the titles. Add anything missed, and exclude repeated appearances of the same physical tape.</p>
-      <ol>${titles.map((item) => `<li>${esc(item.title || "Unreadable title")}</li>`).join("")}</ol>
+      <p class="hint">${onPlace ? "Tap the tape to place its dot." : compareCount ? "Outlined dots are the separate count, not title matches." : "Tap a pink dot to open its title. Check for tapes without a dot."}</p>
+      <ol>${titles.map((item, index) => `<li value="${item.displayNumber || index + 1}">${esc(item.title || "Unreadable title")}</li>`).join("")}</ol>
     </div>`,
     onClose: () => { closed = true; observer?.disconnect(); },
   });
@@ -29,6 +30,7 @@ export function openPhotoPreview({ photo, number, titles = [] }) {
   const viewport = body.querySelector("[data-photo-viewport]");
   const stage = body.querySelector("[data-photo-stage]");
   const image = body.querySelector("[data-photo-image]");
+  const pinLayer = body.querySelector("[data-preview-pins]");
   const output = body.querySelector("[data-photo-zoom]");
   const zoomOut = body.querySelector("[data-zoom-out]");
   const zoomIn = body.querySelector("[data-zoom-in]");
@@ -53,6 +55,12 @@ export function openPhotoPreview({ photo, number, titles = [] }) {
     image.style.width = `${width}px`;
     image.style.height = `${height}px`;
     image.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+    pinLayer.style.width = `${sideways ? height : width}px`;
+    pinLayer.style.height = `${sideways ? width : height}px`;
+    drawPins(pinLayer, compareCount ? countPins(photo) : tapePins(titles), { rotation, onSelect: (pin) => {
+      if (pin.counter || !onSelect) return;
+      close(); onSelect(pin.id);
+    } });
     viewport.scrollLeft = stage.offsetWidth * centerX - viewport.clientWidth / 2;
     viewport.scrollTop = stage.offsetHeight * centerY - viewport.clientHeight / 2;
     output.textContent = `${Math.round(zoom * 100)}%`;
@@ -66,6 +74,16 @@ export function openPhotoPreview({ photo, number, titles = [] }) {
   zoomIn.onclick = () => { zoom = Math.min(maxZoom, zoom * 1.5); draw(); };
   body.querySelector("[data-fit-photo]").onclick = () => { zoom = 1; draw({ center: true }); };
   image.onload = () => draw({ center: true });
+  if (onPlace) {
+    pinLayer.classList.add("placing");
+    pinLayer.onclick = (event) => {
+      if (event.target.closest(".tape-pin")) return;
+      const bounds = pinLayer.getBoundingClientRect();
+      if (!bounds.width || !bounds.height) return;
+      const point = rotatePoint({ x: Math.min(1, Math.max(0, (event.clientX - bounds.left) / bounds.width)), y: Math.min(1, Math.max(0, (event.clientY - bounds.top) / bounds.height)) }, -rotation);
+      close(); onPlace(point);
+    };
+  }
   observer = new ResizeObserver(() => draw({ center: zoom === 1 }));
   observer.observe(viewport);
   requestAnimationFrame(() => draw({ center: true }));

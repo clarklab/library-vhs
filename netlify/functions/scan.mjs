@@ -3,6 +3,7 @@ import { structured, aiErrorResponse, FriendlyError, MODEL, THOROUGH_MODEL } fro
 import {
   SCAN_SCHEMA, SCAN_SYSTEM, COUNT_SCHEMA, COUNT_SYSTEM, parseImageDataUrl,
   normalizeIndependentCount, reconcileScan, parseVerificationContext,
+  sanitizeScanMarkers, sanitizeCountMarkers,
 } from "../lib/scan-contract.mjs";
 
 export const config = { path: "/api/scan" };
@@ -42,21 +43,24 @@ export function createScanHandler({ authenticate = requireAuth, runStructured = 
         system: SCAN_SYSTEM,
         content: [image, { type: "text", text: instruction }],
         schema: SCAN_SCHEMA,
+        sanitizeResponse: sanitizeScanMarkers,
         model,
         maxTokens: mode === "thorough" ? 16000 : 12000,
         effort: mode === "thorough" ? "medium" : "low",
         timeoutMs: Math.min(remaining, 48000),
         signal: req.signal,
       });
-      const recount = !context || context.countedCount === null || context.countedCount !== context.tapes.length || context.uncertainCount > 0;
+      const recount = !context || context.countedCount === null || context.countedCount !== context.tapes.length || context.uncertainCount > 0 ||
+        !context.countPositions || context.countPositions.some((position) => position.markerIssue);
       const counting = !recount
-        ? Promise.resolve({ count: context.countedCount, uncertainCount: context.uncertainCount, notes: "Independent count from the initial pass." })
+        ? Promise.resolve({ count: context.countedCount, positions: context.countPositions, uncertainCount: context.uncertainCount, notes: "Independent count from the initial pass." })
         : runStructured({
           system: COUNT_SYSTEM,
           content: [image, { type: "text", text: "Count the physical VHS tapes. Do not identify their titles." }],
           schema: COUNT_SCHEMA,
+          sanitizeResponse: sanitizeCountMarkers,
           model: mode === "thorough" ? THOROUGH_MODEL : MODEL,
-          maxTokens: 3000,
+          maxTokens: 6000,
           effort: "low",
           timeoutMs: Math.min(remaining, mode === "thorough" ? 30000 : 20000),
           signal: req.signal,

@@ -278,8 +278,7 @@ test("batch review persists edits, gates uncertainty, saves scouts separately an
   await page.locator("[data-start-scan]").click();
   await expect(page.locator("[data-file-library]")).toBeAttached();
   await screenshot(page, "scan-empty-desktop");
-  await page.locator("[data-destination=scout]").click();
-  await page.locator("[data-scout-name]").fill("Saturday store visit");
+  await expect(page.locator("[data-destination=scout]")).not.toBeVisible();
   await page
     .locator("[data-file-library]")
     .setInputFiles([mockImage, { ...mockImage, name: "shelf-2.png" }]);
@@ -289,12 +288,14 @@ test("batch review persists edits, gates uncertainty, saves scouts separately an
   await expect(page.locator("[data-run]")).toContainText("All photos read");
   await expect(page.locator("[data-save]")).toBeDisabled();
   await page.locator("[data-title]").first().fill("Jaws — checked edition");
-  for (const checkbox of await page
-    .locator("[data-confirm-wrap]:visible [data-confirm]")
-    .all())
-    await checkbox.check();
-  for (const checkbox of await page.locator("[data-photo-confirm]").all())
-    await checkbox.check();
+  while (await page.locator("[data-confirm-wrap]:visible [data-confirm]:not(:checked)").count())
+    await page.locator("[data-confirm-wrap]:visible [data-confirm]:not(:checked)").first().check();
+  for (let photoIndex = 0; photoIndex < 2; photoIndex++) {
+    const tab = page.locator("[data-preview]").nth(photoIndex);
+    if (await tab.getAttribute("aria-pressed") !== "true") await tab.click();
+    if (await page.locator("[data-photo-confirm]").isVisible())
+      await page.locator("[data-photo-confirm]").check();
+  }
   await screenshot(page, "scan-review-desktop");
   await page.waitForTimeout(350);
   await page.reload();
@@ -302,11 +303,10 @@ test("batch review persists edits, gates uncertainty, saves scouts separately an
   await expect(page.locator("[data-title]").first()).toHaveValue(
     "Jaws — checked edition",
   );
-  await expect(page.locator("[data-scout-name]")).toHaveValue(
-    "Saturday store visit",
-  );
   await expect(page.locator("[data-save]")).toBeEnabled();
-  await page.locator("[data-save]").click();
+  await page.locator("[data-save-scout]").click();
+  await page.locator("[data-scout-name]").fill("Saturday store visit");
+  await page.getByRole("button", { name: "Save browsing list", exact: true }).click();
   await expect(page.locator("[data-save-summary]")).toContainText(
     "saved to your scout list",
   );
@@ -341,8 +341,7 @@ test("mobile layouts stay within viewport and permit camera/scout selection", as
   ).toBeLessThanOrEqual(390);
   await page.locator(".mobile-tabs [data-tab=scan]").click();
   await expect(page.locator("[data-camera]")).toBeVisible();
-  await page.locator("[data-destination=scout]").click();
-  await expect(page.locator("[data-scout-name]")).toBeVisible();
+  await expect(page.locator("[data-destination=scout]")).not.toBeVisible();
   await screenshot(page, "scan-mobile");
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),

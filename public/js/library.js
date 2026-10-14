@@ -1,6 +1,8 @@
 // Library (grid/list) and tape detail/editor views.
 
-import { api } from "./api.js";
+import { api, getToken } from "./api.js";
+import { marketLabel, marketMeta, marketEvidence } from "./market-view.js";
+import { estimateSubject } from "./scan-session.js";
 import { icons } from "./icons.js";
 import {
   esc,
@@ -397,6 +399,10 @@ export function renderDetail(root, tapeId) {
     return;
   }
   const status = tape.status || "keep";
+  const pricingToken = getToken(), pricingUserId = state.user?.id;
+  let pendingEstimate = null;
+  const pricingAccountMatches = () => state.user?.id === pricingUserId && getToken() === pricingToken;
+  const subjectFor = (fields) => estimateSubject({ ...tape, ...fields, format: fields.format || tape.format || "VHS" });
 
   root.innerHTML = `
     <div class="screen no-tabs detail-screen" style="view-transition-name: detail-screen">
@@ -500,9 +506,10 @@ export function renderDetail(root, tapeId) {
           </label>
         </div>
 
+        <section class="detail-market" data-cached-market>${tape.estimate ? `<p class="eyebrow">SAVED PRICE CHECK</p><strong>${esc(marketLabel(tape.estimate))}</strong><p>${esc(marketMeta(tape.estimate))}</p>${marketEvidence(tape.estimate)}` : ""}</section>
         <div class="stack mt-24">
           ${status !== "sold" ? `<button type="button" class="btn tinted" data-marksold>${icons.dollar} Mark as Sold</button>` : ""}
-          <button type="button" class="btn tinted" data-value>${icons.stats} Check Market Value</button>
+          <button type="button" class="btn tinted" data-value>${icons.stats} Check current prices</button>
           <button type="button" class="btn tinted" data-relookup>${icons.sparkles} Refresh Movie Details</button>
           <button type="button" class="btn destructive" data-delete>Delete Tape</button>
         </div>
@@ -571,6 +578,10 @@ export function renderDetail(root, tapeId) {
 
   const save = async (extraPatch = {}) => {
     const patch = { ...readForm(), ...extraPatch };
+    if (pendingEstimate && JSON.stringify(subjectFor(patch)) === JSON.stringify(pendingEstimate.subject)) {
+      patch.estimate = pendingEstimate.value;
+      patch.estimateFor = pendingEstimate.subject;
+    }
     if (!patch.title) {
       toast("A tape needs a title.", { error: true });
       return false;
@@ -578,8 +589,11 @@ export function renderDetail(root, tapeId) {
     const btn = root.querySelector("[data-save]");
     btn.disabled = true;
     try {
-      const { tape: updated } = await api.updateTape(tape.id, patch);
+      const { tape: updated } = await api.updateTape(tape.id, patch, { expectedToken: pricingToken });
+      if (!pricingAccountMatches()) return false;
+      Object.assign(tape, updated);
       upsertTapes([updated]);
+      pendingEstimate = null;
       return true;
     } catch (err) {
       toast(err.message, { error: true });
@@ -677,58 +691,62 @@ export function renderDetail(root, tapeId) {
     }
   });
 
-  // ----- market value lookup -----
+  // ----- current market evidence -----
+  let cachedMarketKey = JSON.stringify([estimateSubject(tape), tape.estimate || null, false]);
+  const paintCachedMarket = () => {
+    const currentSubject = subjectFor(readForm());
+    const estimate = pendingEstimate && JSON.stringify(currentSubject) === JSON.stringify(pendingEstimate.subject) ? pendingEstimate.value : JSON.stringify(currentSubject) === JSON.stringify(estimateSubject(tape)) ? tape.estimate : null;
+    const key = JSON.stringify([currentSubject, estimate || null, Boolean(pendingEstimate)]);
+    if (key === cachedMarketKey) return;
+    cachedMarketKey = key;
+    const target = root.querySelector("[data-cached-market]");
+    if (target) target.innerHTML = estimate ? `<p class="eyebrow">${pendingEstimate ? "PRICE CHECK · SAVE TO KEEP" : "SAVED PRICE CHECK"}</p><strong>${esc(marketLabel(estimate))}</strong><p>${esc(marketMeta(estimate))}</p>${marketEvidence(estimate)}` : "";
+  };
+  form.addEventListener("input", paintCachedMarket);
   root.querySelector("[data-value]").addEventListener("click", async () => {
-    const current = readForm();
-    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(
-      [current.title, current.year, current.format || tape.format || "VHS"]
-        .filter(Boolean)
-        .join(" "),
-    )}&LH_Sold=1&LH_Complete=1`;
+    if (!pricingAccountMatches()) return;
+    const current = readForm(), subject = subjectFor(current);
+    if (!subject.title.trim() || /^(unknown|unreadable|unidentified|untitled)(\b|$)/i.test(subject.title) || ["unknown", "Other"].includes(subject.format)) {
+      toast("Identify the title and format before checking prices.", { error: true }); return;
+    }
+    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent([subject.title,subject.year,subject.format,subject.edition].filter(Boolean).join(" "))}&LH_Sold=1&LH_Complete=1`;
+    const controller = new AbortController();
     const { body } = openSheet({
-      title: "Estimated resale value",
-      content: `
-        <div class="value-loading"><span class="spinner dark"></span><p class="centered-note">Sizing up “${esc(current.title)}”…</p></div>
-        <div class="value-result" hidden></div>
-        <div class="stack mt-16">
-          <a class="btn gray" href="${esc(ebayUrl)}" target="_blank" rel="noopener">Check sold listings on eBay</a>
-        </div>
-        <p class="hint" style="padding:10px 4px 0; text-align:center">AI estimate, not live sales data. Edition, condition and actual sold listings determine value.</p>`,
+      title: "Current market prices",
+      onClose: () => controller.abort(),
+      content: `<div class="value-loading"><span class="spinner dark"></span><p class="centered-note">Checking current listings for “${esc(current.title)}”…</p></div><div class="value-result" hidden></div><div class="stack mt-16"><a class="btn gray" href="${esc(ebayUrl)}" target="_blank" rel="noopener noreferrer">Open eBay sold listings</a></div><p class="hint">Matching asking prices and sold evidence are labeled separately. Compare the exact edition and condition; fees and shipping affect the final return.</p>`,
     });
+    const visible = () => pricingAccountMatches() && form.isConnected && state.view === "detail" && state.viewArg === tapeId && body.isConnected && !controller.signal.aborted;
+    const observer = new MutationObserver(() => { if (!visible()) controller.abort(); });
+    observer.observe(document.getElementById("app"), { childList: true, subtree: true });
     try {
-      const v = await api.valueEstimate({
-        title: current.title,
-        format: current.format || tape.format || "VHS",
-        year: current.year,
-        edition: current.edition,
-        packaging: current.packaging,
-        sealed: current.sealed,
-        condition: current.condition,
-      });
+      const value = await api.valueEstimate(subject, { expectedToken: pricingToken, signal: controller.signal });
+      if (!visible()) return;
       const result = body.querySelector(".value-result");
-      const demand = {
-        hot: ["High interest", "var(--red)"],
-        steady: ["Steady interest", "var(--green)"],
-        slow: ["Low interest", "var(--label-secondary)"],
-      }[v.demand] || ["Uncertain demand", "var(--label-secondary)"];
-      result.innerHTML =
-        v.known && v.typical != null
-          ? `
-          <div class="value-hero">
-            <div class="value-big">${money(v.typical)}</div>
-            <div class="value-range">${v.low != null && v.high != null ? `${money(v.low)} – ${money(v.high)} range` : ""}</div>
-            <div class="value-demand" style="color:${demand[1]}">${demand[0]}</div>
-          </div>
-          ${v.factors.length ? `<ul class="value-factors">${v.factors.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
-          ${v.summary ? `<p class="centered-note" style="padding-top:6px">${esc(v.summary)}</p>` : ""}`
-          : `<p class="centered-note">Not enough market history on this one — check the eBay sold listings below.</p>`;
+      result.innerHTML = `<div class="value-hero"><div class="value-big">${esc(marketLabel(value))}</div><div class="value-range">${esc(marketMeta(value))}</div></div>${marketEvidence(value)}<p class="hint" data-price-save></p>`;
       body.querySelector(".value-loading").hidden = true;
       result.hidden = false;
-    } catch (err) {
-      const loading = body.querySelector(".value-loading");
-      if (loading)
-        loading.innerHTML = `<p class="centered-note">${esc(err.message)}</p>`;
-    }
+      const note = result.querySelector("[data-price-save]");
+      if (value.market?.status === "unavailable") { note.textContent = "The check is unavailable. Any previously saved price is kept; try again later."; return; }
+      if (JSON.stringify(subjectFor(readForm())) !== JSON.stringify(subject)) { note.textContent = "The tape’s details changed during this check. Check again for the corrected title."; return; }
+      if (JSON.stringify(estimateSubject(tape)) !== JSON.stringify(subject)) {
+        pendingEstimate = { value, subject }; paintCachedMarket();
+        note.textContent = "Save the edited tape details to keep this price check with them."; return;
+      }
+      try {
+        const { tape: updated } = await api.updateTape(tape.id, { estimate: value, estimateFor: subject }, { expectedToken: pricingToken, signal: controller.signal });
+        if (!visible()) return;
+        Object.assign(tape, updated); upsertTapes([updated]); paintCachedMarket();
+        note.textContent = "Price check saved with this tape.";
+      } catch (error) {
+        if (!visible()) return;
+        pendingEstimate = { value, subject }; paintCachedMarket();
+        note.textContent = `The price check could not be saved: ${error.message} Use Save on the tape to retry.`;
+      }
+    } catch (error) {
+      if (!visible()) return;
+      body.querySelector(".value-loading").innerHTML = `<p class="centered-note">${esc(error.message)}</p>`;
+    } finally { observer.disconnect(); }
   });
 
   root

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mapWithConcurrency } from "./tape-batch.mjs";
+import { validMarketEstimate } from "./market-contract.mjs";
 
 export const BACKUP_FORMAT = "tape-deck-account-backup";
 export const BACKUP_VERSION = 1;
@@ -34,14 +35,14 @@ const allowed = (value, fields, label) => {
   for (const key of Object.keys(value)) if (!fields.has(key)) fail(`Unsupported ${label} field: ${key.slice(0, 80)}.`);
 };
 const strings = {
-  title: 300, director: 300, genre: 120, runtime: 40, rated: 20, plot: 1200,
+  title: 300, director: 300, artist: 200, genre: 120, runtime: 40, rated: 20, plot: 1200,
   imdbRating: 10, imdbId: 20, posterUrl: 600, format: 40, edition: 200,
   label: 120, packaging: 40, acquiredDate: 30, acquiredFrom: 200, barcode: 40,
   condition: 40, status: 40, soldDate: 30, location: 200, notes: 2000, source: 30,
 };
 const numbers = ["year", "pricePaid", "priceAsking", "priceSold"];
-const tapeFields = new Set([...Object.keys(strings), ...numbers, "sealed", "actors", "tags", "id", "clientId", "createdAt", "updatedAt"]);
-const scoutItemFields = new Set([...tapeFields, "artist", "photoId", "sourceIndex", "visual", "confidence", "estimate", "purchasedTapeId"]);
+const tapeFields = new Set([...Object.keys(strings), ...numbers, "sealed", "actors", "tags", "id", "clientId", "createdAt", "updatedAt", "estimate"]);
+const scoutItemFields = new Set([...tapeFields, "photoId", "sourceIndex", "visual", "confidence", "purchasedTapeId", "marker", "markerIssue"]);
 const listFields = new Set(["id", "clientId", "name", "items", "photos", "createdAt", "updatedAt", "revision"]);
 
 /** Whitelist export fields so a backup can never carry account credentials. */
@@ -98,6 +99,7 @@ function validateTapeFields(input, { scout = false } = {}) {
   if (input.posterUrl && !/^https:\/\//.test(input.posterUrl) && !/^\/api\/cover\/[a-f0-9]{32}$/.test(input.posterUrl)) fail("Invalid cover URL.");
   for (const key of ["createdAt", "updatedAt"]) if (input[key] !== undefined) date(input[key], key);
   for (const key of ["id", "clientId"]) if (input[key] !== undefined) identifier(input[key], key);
+  if (input.estimate !== undefined) validateEstimate(input.estimate);
   return structuredClone(input);
 }
 
@@ -118,10 +120,10 @@ function remapCover(record, context) {
 function validateEstimate(input) {
   if (input === null) return null;
   object(input, "Estimate");
-  allowed(input, new Set(["known", "low", "high", "typical", "demand", "factors", "summary", "source", "currency", "liveComps", "worthChecking", "estimatedAt"]), "estimate");
+  allowed(input, new Set(["known", "low", "high", "typical", "demand", "factors", "summary", "source", "currency", "liveComps", "worthChecking", "estimatedAt", "market"]), "estimate");
   for (const key of ["known", "liveComps", "worthChecking"]) if (typeof input[key] !== "boolean") fail(`Invalid estimate ${key}.`);
   for (const key of ["low", "high", "typical"]) if (input[key] !== null && (typeof input[key] !== "number" || !Number.isFinite(input[key]) || input[key] < 0 || input[key] > 1_000_000)) fail(`Invalid estimate ${key}.`);
-  if (input.source !== "ai_estimate" || input.currency !== "USD" || input.liveComps !== false) fail("Estimates must be labeled as AI estimates without live sales data.");
+  if (input.currency !== "USD" || (input.source === "live_web_search" ? !validMarketEstimate(input) : input.source !== "ai_estimate" || input.liveComps !== false || input.market !== undefined)) fail("The price source or live listing evidence is invalid.");
   if (!["hot", "steady", "slow"].includes(input.demand)) fail("Invalid estimate demand.");
   if (!Array.isArray(input.factors) || input.factors.length > 4) fail("Invalid estimate factors.");
   input.factors.forEach((entry) => string(entry, 200, "estimate factor"));
@@ -150,6 +152,12 @@ export function validateScout(input) {
     if (clean.sourceIndex !== undefined && clean.sourceIndex !== null && (!Number.isInteger(clean.sourceIndex) || clean.sourceIndex < 0 || clean.sourceIndex > 1000)) fail("Invalid source position.");
     if (clean.confidence !== undefined && !["high", "medium", "low", "manual"].includes(clean.confidence)) fail("Invalid title confidence.");
     if (clean.purchasedTapeId !== undefined && clean.purchasedTapeId !== null) identifier(clean.purchasedTapeId, "purchased tape ID");
+    if (clean.marker !== undefined && clean.marker !== null) {
+      object(clean.marker, "Tape marker");
+      allowed(clean.marker, new Set(["x", "y"]), "marker");
+      if (![clean.marker.x, clean.marker.y].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) fail("Invalid tape marker coordinates.");
+    }
+    if (clean.markerIssue !== undefined && ![null, "unplaced", "overlap"].includes(clean.markerIssue)) fail("Invalid tape marker status.");
     if (clean.estimate !== undefined) clean.estimate = validateEstimate(clean.estimate);
     return clean;
   });

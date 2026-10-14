@@ -52,7 +52,7 @@ export function matchesSchema(value, schema) {
   return true;
 }
 
-export function parseStructuredResponse(response, schema) {
+export function parseStructuredResponse(response, schema, { sanitize } = {}) {
   if (response?.stop_reason === "refusal") {
     throw new FriendlyError("The scanner could not read this image. Try a different photo.", 422, { code: "AI_REFUSAL" });
   }
@@ -65,6 +65,7 @@ export function parseStructuredResponse(response, schema) {
   const text = response.content.filter((block) => block?.type === "text").map((block) => block.text).join("");
   let result;
   try { result = JSON.parse(text); } catch { throw invalidResponse(); }
+  if (sanitize) result = sanitize(result);
   if (!matchesSchema(result, schema)) throw invalidResponse();
   return result;
 }
@@ -113,6 +114,7 @@ export function normalizeAiError(err) {
 export async function structured({
   system, content, schema, maxTokens = 8000, effort = "low", timeoutMs = 48000,
   model = MODEL, signal, client, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sanitizeResponse,
 }) {
   const deadline = Date.now() + Math.min(timeoutMs, 48000);
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -142,7 +144,7 @@ export async function structured({
       }
       throw friendly;
     }
-    return parseStructuredResponse(response, schema);
+    return parseStructuredResponse(response, schema, { sanitize: sanitizeResponse });
   }
 }
 
