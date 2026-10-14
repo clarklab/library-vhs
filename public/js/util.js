@@ -30,24 +30,39 @@ export function debounce(fn, ms) {
 /** Reads a File and returns a resized JPEG data URL suitable for AI vision. */
 export function resizeImage(file, maxDim = 1568, quality = 0.85) {
   return new Promise((resolve, reject) => {
+    if (!file || !file.size) return reject(new Error("That photo is empty. Choose another image."));
+    if (file.size > 45 * 1024 * 1024) return reject(new Error("That photo is too large. Choose an image smaller than 45 MB."));
+    if (file.type && !file.type.startsWith("image/")) return reject(new Error("Choose a JPEG, PNG, WebP, or another supported image."));
     const url = URL.createObjectURL(file);
     const img = new Image();
+    const cleanup = () => { clearTimeout(timer); URL.revokeObjectURL(url); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error("This photo took too long to open. Try a smaller image.")); }, 30000);
     img.onload = () => {
-      URL.revokeObjectURL(url);
-      let { width, height } = img;
-      const scale = Math.min(1, maxDim / Math.max(width, height));
-      width = Math.round(width * scale);
-      height = Math.round(height * scale);
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL("image/jpeg", quality));
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth, img.naturalHeight));
+        const width = Math.max(1, Math.round(img.naturalWidth * scale));
+        const height = Math.max(1, Math.round(img.naturalHeight * scale));
+        if (!img.naturalWidth || !img.naturalHeight) throw new Error("This image has no readable pixels.");
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("This device could not prepare the photo. Close other tabs and try again.");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, width, height);
+        ctx.drawImage(img, 0, 0, width, height);
+        let data = canvas.toDataURL("image/jpeg", quality);
+        // Keep JSON uploads comfortably inside the gateway's request limit.
+        for (let q = quality - 0.1; data.length > 4_500_000 && q >= 0.45; q -= 0.1) data = canvas.toDataURL("image/jpeg", q);
+        if (!data.startsWith("data:image/jpeg") || data.length > 4_500_000) throw new Error("This photo is too detailed to upload. Crop it into two closer photos.");
+        canvas.width = canvas.height = 1;
+        cleanup();
+        resolve(data);
+      } catch (error) { cleanup(); reject(error); }
     };
     img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Couldn't read that image."));
+      cleanup();
+      reject(new Error("This photo format could not be opened. Try JPEG, PNG, or a new camera photo."));
     };
     img.src = url;
   });

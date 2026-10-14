@@ -133,8 +133,13 @@ const SEAL_GLINT = `<span class="seal-glint" aria-hidden="true"></span>`;
  * (see __vhsTrimPoster). A small CSS bleed catches what sampling can't.
  */
 export function coverArt(tape) {
+  // Bypass older public, year-long browser cache entries on uploaded images.
+  // Keep the canonical stored URL intact for portable backups.
+  const posterUrl = /^\/api\/cover\/[a-f0-9]{32}$/.test(tape.posterUrl || "")
+    ? `${tape.posterUrl}?private=1`
+    : tape.posterUrl;
   const art = tape.posterUrl
-    ? `<img src="${esc(tape.posterUrl)}" alt="${esc(tape.title)}" loading="lazy" crossorigin="anonymous" onload="window.__vhsPosterLoaded(this)" onerror="window.__vhsPosterError(this)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
+    ? `<img src="${esc(posterUrl)}" alt="${esc(tape.title)}" loading="lazy" crossorigin="anonymous" onload="window.__vhsPosterLoaded(this)" onerror="window.__vhsPosterError(this)" data-t="${esc(JSON.stringify({ title: tape.title, year: tape.year, genre: tape.genre }))}">`
     : generatedCover(tape);
   return `<span class="box-front">${isSealed(tape) ? art + SEAL_GLINT : art}</span>`;
 }

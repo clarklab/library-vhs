@@ -3,17 +3,26 @@
 import { api, getToken, setToken } from "./api.js";
 import { icons } from "./icons.js";
 import { esc } from "./util.js";
-import { toast } from "./ui.js";
+import { toast, closeAllSheets } from "./ui.js";
 import { renderLibrary, renderDetail } from "./library.js";
-import { openAddSheet, renderScan, renderAddTitle, renderBulk, renderCsv } from "./addflows.js";
+import {
+  renderScan,
+  renderAddTitle,
+  renderBulk,
+} from "./addflows.js";
+import { renderScouts } from "./scouts.js";
 import { renderStats, renderSales, renderSettings } from "./stats.js";
-import { initTilt } from "./tilt.js";
+import { pauseScanSession, disposeScanSession } from "./scan-session.js";
+import { brandMark } from "./brand.js";
+import { renderAuth as renderAuthView } from "./auth-view.js";
+import { renderBackup, disposeBackup } from "./backup.js";
 import { initInstall, maybeOfferInstall } from "./install.js";
 
 export const state = {
   user: null,
   tapes: [],
   loaded: false,
+  loadError: "",
   view: "auth",
   viewArg: null,
   library: { mode: "grid", query: "", filter: "all", sort: "added" },
@@ -23,11 +32,12 @@ const app = () => document.getElementById("app");
 
 // ---------- routing ----------
 
-const TAB_VIEWS = ["library", "stats", "sales", "settings"];
-
 export function go(view, arg = null, { replace = false } = {}) {
+  if (view === "csv") view = "backup";
   const fromView = state.view;
   const fromArg = state.viewArg;
+  disposeBackup();
+  if (fromView === "scan" && view !== "scan") pauseScanSession();
   state.view = view;
   state.viewArg = arg;
   const entry = { view, arg };
@@ -41,7 +51,10 @@ export function back() {
 }
 
 window.addEventListener("popstate", (event) => {
+  disposeBackup();
   const entry = event.state;
+  if (entry?.view === "csv") entry.view = "backup";
+  if (state.view === "scan" && entry?.view !== "scan") pauseScanSession();
   const fromView = state.view;
   const fromArg = state.viewArg;
   if (state.user) {
@@ -61,9 +74,15 @@ window.addEventListener("popstate", (event) => {
 function renderWithTransition(fromView, fromArg) {
   const entering = state.view === "detail" && fromView !== "detail";
   const leaving = fromView === "detail" && state.view !== "detail";
-  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
 
-  if (!document.startViewTransition || reduceMotion || (!entering && !leaving)) {
+  if (
+    !document.startViewTransition ||
+    reduceMotion ||
+    (!entering && !leaving)
+  ) {
     render();
     return;
   }
@@ -71,7 +90,9 @@ function renderWithTransition(fromView, fromArg) {
   // Entering: tag the tapped cover so the browser pairs it with the detail
   // hero (which carries the same view-transition-name in its markup).
   const sourceCover = entering
-    ? document.querySelector(`[data-tape="${CSS.escape(state.viewArg ?? "")}"] .cover-art, [data-tape="${CSS.escape(state.viewArg ?? "")}"] .tape-thumb`)
+    ? document.querySelector(
+        `[data-tape="${CSS.escape(state.viewArg ?? "")}"] .cover-art, [data-tape="${CSS.escape(state.viewArg ?? "")}"] .tape-thumb`,
+      )
     : null;
   if (sourceCover) sourceCover.style.viewTransitionName = "tape-poster";
 
@@ -80,7 +101,9 @@ function renderWithTransition(fromView, fromArg) {
     render();
     if (leaving && fromArg) {
       // Returning: pair the detail hero we just left with its library cell.
-      destCover = document.querySelector(`[data-tape="${CSS.escape(fromArg)}"] .cover-art, [data-tape="${CSS.escape(fromArg)}"] .tape-thumb`);
+      destCover = document.querySelector(
+        `[data-tape="${CSS.escape(fromArg)}"] .cover-art, [data-tape="${CSS.escape(fromArg)}"] .tape-thumb`,
+      );
       if (destCover) destCover.style.viewTransitionName = "tape-poster";
     }
   });
@@ -92,9 +115,21 @@ function renderWithTransition(fromView, fromArg) {
 // ---------- data ----------
 
 export async function refreshTapes() {
-  const { tapes } = await api.listTapes();
-  state.tapes = tapes;
-  state.loaded = true;
+  const userId = state.user?.id;
+  const token = getToken();
+  const sameAccount = () => state.user?.id === userId && getToken() === token;
+  try {
+    const { tapes } = await api.listTapes();
+    if (!sameAccount()) return false;
+    state.tapes = tapes;
+    state.loaded = true;
+    state.loadError = "";
+    return true;
+  } catch (error) {
+    if (!sameAccount()) return false;
+    state.loadError = error.message;
+    throw error;
+  }
 }
 
 export function upsertTapes(tapes) {
@@ -113,12 +148,15 @@ export function removeTape(id) {
 
 export function render() {
   window.scrollTo(0, 0);
-  const root = app();
+  const shell = app();
 
   if (!state.user) {
-    renderAuth(root);
+    renderAuth(shell);
     return;
   }
+
+  shell.innerHTML = `${sidebar(state.view)}<div class="app-main">${workspaceHeader()}<main id="workspace" tabindex="-1"></main></div>`;
+  const root = shell.querySelector("#workspace");
 
   switch (state.view) {
     case "library":
@@ -126,6 +164,9 @@ export function render() {
       break;
     case "detail":
       renderDetail(root, state.viewArg);
+      break;
+    case "scouts":
+      renderScouts(root);
       break;
     case "stats":
       renderStats(root);
@@ -136,6 +177,9 @@ export function render() {
     case "settings":
       renderSettings(root);
       break;
+    case "backup":
+      renderBackup(root);
+      break;
     case "scan":
       renderScan(root);
       break;
@@ -145,136 +189,96 @@ export function render() {
     case "bulk":
       renderBulk(root);
       break;
-    case "csv":
-      renderCsv(root);
-      break;
     default:
       renderLibrary(root);
   }
 
-  if (TAB_VIEWS.includes(state.view)) {
-    root.insertAdjacentHTML("beforeend", tabBar(state.view));
-    wireTabBar(root);
-  }
+  shell.insertAdjacentHTML("beforeend", tabBar(state.view));
+  wireNavigation(shell);
 }
 
 export function rerender() {
   render();
 }
 
+const NAV_ITEMS = [
+  ["library", "library", "Collection"],
+  ["scan", "camera", "Scan workspace"],
+  ["scouts", "search", "Scout lists"],
+  ["stats", "stats", "Insights"],
+  ["sales", "sales", "Sales"],
+];
+function sidebar(active) {
+  return `<aside class="sidebar">
+    <a class="brand" href="/" aria-label="VHS Vault home">${brandMark()}<span>VHS<span class="brand-light">Vault</span><small>THE COLLECTOR’S COMPANION</small></span></a>
+    <div class="sidebar-label">Workspace</div>
+    <nav aria-label="Main navigation">${NAV_ITEMS.map(([view, icon, label]) => `<button type="button" class="side-link${active === view ? " active" : ""}" data-tab="${view}" ${active === view ? 'aria-current="page"' : ""}>${icons[icon]}<span>${label}</span>${view === "library" ? `<span class="nav-count">${state.tapes.length}</span>` : ""}</button>`).join("")}</nav>
+    <div class="sidebar-note"><span class="mono">GOOD TAPES. GOOD COMPANY.</span><p>A little analog.<br>A lot more organized.</p><div class="color-stripes" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
+    <div class="sidebar-bottom"><button type="button" class="side-link${["settings", "backup"].includes(active) ? " active" : ""}" data-tab="settings">${icons.settings}<span>Account &amp; backup</span></button><div class="account"><span class="account-avatar">${esc((state.user?.email || "V")[0].toUpperCase())}</span><div><strong>${esc(state.user?.displayName || "Your personal vault")}</strong><p>${esc(state.user?.email || "")}</p></div></div></div>
+  </aside>`;
+}
+function workspaceHeader() {
+  const labels = {
+    library: "Collection",
+    scan: "Scan workspace",
+    scouts: "Scout lists",
+    stats: "Insights",
+    sales: "Sales",
+    settings: "Account & backup",
+    backup: "Backup & import",
+    detail: "Tape details",
+    addTitle: "Add a title",
+    bulk: "Paste a list",
+    csv: "Import inventory",
+  };
+  return `<header class="workspace-header"><div class="breadcrumb"><span>Personal vault</span><span aria-hidden="true">/</span><strong>${labels[state.view] || "Collection"}</strong></div><div class="header-right"><span class="header-note">Made for the love of tape.</span><button type="button" class="icon-button" data-tab="settings" aria-label="Settings">${icons.settings}</button><button type="button" class="icon-button mobile-menu-toggle" data-menu aria-label="Open navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div></header>`;
+}
 function tabBar(active) {
-  const tab = (view, icon, label) => `
-    <button class="tab${active === view ? " active" : ""}" data-tab="${view}" aria-label="${label}">
-      ${icon}<span>${label}</span>
-    </button>`;
-  return `
-    <nav class="tabbar">
-      <div class="tabbar-inner">
-        ${tab("library", icons.library, "Library")}
-        ${tab("stats", icons.stats, "Stats")}
-        <div class="tab-add">
-          <button class="tab-add-btn" data-add aria-label="Add tapes">${icons.plus}</button>
-        </div>
-        ${tab("sales", icons.sales, "Sales")}
-        ${tab("settings", icons.settings, "Settings")}
-      </div>
-    </nav>`;
+  if (active === "backup") active = "settings";
+  return `<nav class="mobile-tabs" aria-label="Mobile navigation">${[...NAV_ITEMS.filter(([view]) => view !== "sales"), ["settings", "settings", "Settings"]].map(([view, icon, label]) => `<button type="button" class="mobile-tab${active === view ? " active" : ""}" data-tab="${view}" ${active === view ? 'aria-current="page"' : ""}>${icons[icon]}<span>${view === "scan" ? "Scan" : view === "scouts" ? "Scouts" : label}</span></button>`).join("")}</nav>`;
 }
-
-function wireTabBar(root) {
-  root.querySelectorAll("[data-tab]").forEach((btn) => {
+function wireNavigation(root) {
+  root.querySelectorAll("[data-tab]").forEach((btn) =>
     btn.addEventListener("click", () => {
-      if (state.view !== btn.dataset.tab) go(btn.dataset.tab, null, { replace: true });
-    });
+      if (state.view !== btn.dataset.tab) go(btn.dataset.tab);
+    }),
+  );
+  root.querySelector("[data-menu]")?.addEventListener("click", (event) => {
+    const open = root.querySelector(".sidebar").classList.toggle("mobile-open");
+    event.currentTarget.setAttribute("aria-expanded", String(open));
+    event.currentTarget.setAttribute(
+      "aria-label",
+      open ? "Close navigation" : "Open navigation",
+    );
   });
-  root.querySelector("[data-add]")?.addEventListener("click", () => openAddSheet());
+  root.querySelector(".brand")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    go("library");
+  });
 }
 
-// ---------- auth screen ----------
+// ---------- account sessions ----------
+
+export function adoptAccountSession(result) {
+  const marker = result.sessionId ? `cookie:${result.sessionId}` : result.token || getToken();
+  if (!marker || !result.user?.id) throw new Error("Your sign-in could not be confirmed. Please try again.");
+  if (marker !== getToken()) disposeScanSession();
+  setToken(marker);
+  state.user = result.user;
+}
 
 function renderAuth(root) {
-  let mode = "login";
-  root.innerHTML = `
-    <div class="auth-screen fade-in">
-      <div class="auth-logo">
-        <div class="logo-mark">${logoMark()}</div>
-        <h1>VHS Vault</h1>
-        <p>Your garage full of tapes, in your pocket.</p>
-      </div>
-      <div class="segmented" role="tablist">
-        <button class="active" data-mode="login">Sign In</button>
-        <button data-mode="signup">Create Account</button>
-      </div>
-      <form class="auth-form" novalidate>
-        <input class="text-field" type="email" name="email" placeholder="Email" autocomplete="email" inputmode="email" autocapitalize="off" required />
-        <input class="text-field" type="password" name="password" placeholder="Password" autocomplete="current-password" required />
-        <div class="auth-error" role="alert"></div>
-        <button class="btn" type="submit">Sign In</button>
-      </form>
-      <p class="centered-note mt-16">Track your collection, scan tapes with your camera,<br/>and price them for the next swap meet.</p>
-    </div>`;
-
-  const form = root.querySelector("form");
-  const errorEl = root.querySelector(".auth-error");
-  const submitBtn = form.querySelector("button[type=submit]");
-  const passwordInput = form.querySelector("[name=password]");
-
-  root.querySelectorAll("[data-mode]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      mode = btn.dataset.mode;
-      root.querySelectorAll("[data-mode]").forEach((b) => b.classList.toggle("active", b === btn));
-      submitBtn.textContent = mode === "login" ? "Sign In" : "Create Account";
-      passwordInput.autocomplete = mode === "login" ? "current-password" : "new-password";
-      errorEl.textContent = "";
-    });
+  renderAuthView(root, async (result) => {
+    adoptAccountSession(result);
+    await loadAndEnter({ offerInstall: !result.recoveryCode });
   });
-
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    errorEl.textContent = "";
-    const email = form.email.value.trim();
-    const password = form.password.value;
-    if (!email || !password) {
-      errorEl.textContent = "Enter your email and password.";
-      return;
-    }
-    submitBtn.disabled = true;
-    submitBtn.innerHTML = `<span class="spinner"></span>`;
-    try {
-      const result = mode === "login" ? await api.login(email, password) : await api.signup(email, password);
-      setToken(result.token);
-      state.user = result.user;
-      await loadAndEnter();
-    } catch (err) {
-      errorEl.textContent = err.message;
-      submitBtn.disabled = false;
-      submitBtn.textContent = mode === "login" ? "Sign In" : "Create Account";
-    }
-  });
-}
-
-function logoMark() {
-  return `<svg viewBox="0 0 96 96" xmlns="http://www.w3.org/2000/svg">
-    <rect x="4" y="18" width="88" height="60" rx="10" fill="#1c1c2e"/>
-    <rect x="4" y="18" width="88" height="60" rx="10" fill="none" stroke="url(#lg)" stroke-width="3"/>
-    <circle cx="30" cy="48" r="10" fill="none" stroke="#38e0ff" stroke-width="4"/>
-    <circle cx="66" cy="48" r="10" fill="none" stroke="#ff2d75" stroke-width="4"/>
-    <path d="M30 62h36" stroke="#f7d060" stroke-width="4" stroke-linecap="round"/>
-    <defs>
-      <linearGradient id="lg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#38e0ff"/>
-        <stop offset="0.5" stop-color="#af52de"/>
-        <stop offset="1" stop-color="#ff2d75"/>
-      </linearGradient>
-    </defs>
-  </svg>`;
 }
 
 // ---------- boot ----------
 
-async function loadAndEnter() {
+async function loadAndEnter({ offerInstall = true } = {}) {
   try {
-    await refreshTapes();
+    if ((await refreshTapes()) === false) return;
   } catch (err) {
     toast(err.message, { error: true });
   }
@@ -288,46 +292,76 @@ async function loadAndEnter() {
   go("library", null, { replace: true });
   // Offer Add-to-Home-Screen once things have settled (skips if installed,
   // recently dismissed, or the platform can't install).
-  setTimeout(() => maybeOfferInstall(), 1600);
+  if (offerInstall) setTimeout(() => maybeOfferInstall(), 1600);
 }
 
 window.addEventListener("vhs:signed-out", () => {
+  closeAllSheets();
+  disposeBackup();
+  disposeScanSession();
   state.user = null;
   state.tapes = [];
   state.loaded = false;
+  state.loadError = "";
   state.view = "auth";
   render();
   toast("Signed out.", {});
 });
 
-export async function signOut() {
-  try {
-    await api.logout();
-  } catch {
-    /* ignore */
+// Another tab can change the shared session token while this tab has a draft.
+// Stop the previous user's work before re-establishing the authenticated shell.
+window.addEventListener("storage", (event) => {
+  if (event.key === "vhsvault.token" && event.oldValue !== event.newValue) {
+    closeAllSheets();
+    disposeBackup();
+    disposeScanSession();
+    window.location.reload();
   }
+});
+
+document.addEventListener("keydown", (event) => {
+  if (
+    event.key === "/" &&
+    state.view === "library" &&
+    !/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName || "") &&
+    !document.querySelector(".sheet.open")
+  ) {
+    event.preventDefault();
+    document.querySelector("[data-search]")?.focus();
+  }
+});
+
+export function clearAccountSession() {
+  closeAllSheets();
+  disposeBackup();
+  disposeScanSession();
   setToken(null);
   state.user = null;
   state.tapes = [];
   state.loaded = false;
+  state.loadError = "";
   go("auth", null, { replace: true });
 }
 
+export async function signOut(options = { expectedToken: getToken() }) {
+  // A local-only logout would leave the HttpOnly session active on this device.
+  // Keep the account visible if the server cannot confirm session revocation.
+  await api.logout(options);
+  clearAccountSession();
+}
+
 async function boot() {
-  if (getToken()) {
-    try {
-      const { user } = await api.me();
-      state.user = user;
-      await loadAndEnter();
-      return;
-    } catch (err) {
-      if (err.status === 401) {
-        setToken(null); // session genuinely expired
-      } else {
-        renderOffline(err);
-        return; // network/server hiccup — keep the session, offer retry
-      }
-    }
+  const expectedToken = getToken();
+  const hadSession = Boolean(expectedToken);
+  try {
+    const result = await api.me({ expectedToken });
+    adoptAccountSession(result);
+    await loadAndEnter();
+    return;
+  } catch (err) {
+    if (getToken() !== expectedToken && getToken() !== null) return;
+    if (err.status === 401) setToken(null);
+    else if (hadSession) { renderOffline(err); return; }
   }
   state.view = "auth";
   history.replaceState({ view: "auth" }, "");
@@ -338,18 +372,20 @@ function renderOffline(err) {
   app().innerHTML = `
     <div class="auth-screen fade-in">
       <div class="auth-logo">
-        <div class="logo-mark">${logoMark()}</div>
+        <div class="logo-mark">${brandMark()}</div>
         <h1>VHS Vault</h1>
         <p>${esc(err?.status === 0 ? "You appear to be offline." : "Couldn't reach the server.")}</p>
       </div>
       <button class="btn mt-16" data-retry>Try Again</button>
     </div>`;
-  app().querySelector("[data-retry]").addEventListener("click", () => {
-    app().querySelector("[data-retry]").innerHTML = `<span class="spinner"></span>`;
-    boot();
-  });
+  app()
+    .querySelector("[data-retry]")
+    .addEventListener("click", () => {
+      app().querySelector("[data-retry]").innerHTML =
+        `<span class="spinner"></span>`;
+      boot();
+    });
 }
 
-initTilt();
 initInstall();
 boot();

@@ -5,19 +5,33 @@ import { esc } from "./util.js";
 
 const sheetRoot = () => document.getElementById("sheet-root");
 const toastRoot = () => document.getElementById("toast-root");
+const openSheets = new Set();
 
+export function closeAllSheets() {
+  for (const close of [...openSheets]) close();
+  // Remove private form and recovery content immediately on session changes.
+  sheetRoot()?.replaceChildren();
+}
 
 /**
  * Opens an iOS-style bottom sheet. Returns { close, body } where body is the
  * scrollable content element. onClose fires after dismiss animation.
  */
-export function openSheet({ title = "", content = "", onClose = null, showClose = true }) {
+export function openSheet({
+  title = "",
+  content = "",
+  onClose = null,
+  showClose = true,
+}) {
+  const previousFocus = document.activeElement;
   const backdrop = document.createElement("div");
   backdrop.className = "sheet-backdrop";
   const sheet = document.createElement("div");
   sheet.className = "sheet";
   sheet.setAttribute("role", "dialog");
   sheet.setAttribute("aria-modal", "true");
+  sheet.setAttribute("aria-label", title || "Dialog");
+  sheet.tabIndex = -1;
   sheet.innerHTML = `
     <div class="sheet-grabber"></div>
     <div class="sheet-header">
@@ -34,20 +48,53 @@ export function openSheet({ title = "", content = "", onClose = null, showClose 
   requestAnimationFrame(() => {
     backdrop.classList.add("open");
     sheet.classList.add("open");
+    (sheet.querySelector("button, input, select, textarea") || sheet).focus();
   });
 
   let closed = false;
   const close = () => {
     if (closed) return;
     closed = true;
+    openSheets.delete(close);
+    document.removeEventListener("keydown", onKeyDown);
     backdrop.classList.remove("open");
     sheet.classList.remove("open");
     setTimeout(() => {
       backdrop.remove();
       sheet.remove();
       onClose?.();
+      if (previousFocus?.isConnected) previousFocus.focus();
     }, 320);
   };
+  openSheets.add(close);
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+    }
+    if (event.key !== "Tab") return;
+    const focusable = [
+      ...sheet.querySelectorAll(
+        'button, input, select, textarea, a[href], [tabindex="0"]',
+      ),
+    ].filter((el) => !el.disabled && el.offsetParent !== null);
+    const first = focusable[0],
+      last = focusable.at(-1);
+    if (!first) {
+      event.preventDefault();
+      sheet.focus();
+    } else if (
+      event.shiftKey &&
+      (document.activeElement === first || document.activeElement === sheet)
+    ) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+  document.addEventListener("keydown", onKeyDown);
   backdrop.addEventListener("click", close);
   sheet.querySelector("[data-close]")?.addEventListener("click", close);
   return { close, body, sheet };
@@ -69,7 +116,12 @@ export function toast(message, { error = false, duration = 2600 } = {}) {
 }
 
 /** iOS-style destructive confirm rendered as a sheet. Resolves boolean. */
-export function confirmSheet({ title, message, confirmLabel = "Delete", destructive = true }) {
+export function confirmSheet({
+  title,
+  message,
+  confirmLabel = "Delete",
+  destructive = true,
+}) {
   return new Promise((resolve) => {
     let decided = false;
     const { close } = openSheet({
@@ -117,7 +169,8 @@ export function emptyState({ icon, title, message }) {
  * or tap the number to type. Wire with wirePriceFields(container).
  */
 export function priceField({ name, value = "", placeholder = "0" }) {
-  const shown = value === null || value === undefined || value === "" ? "" : String(value);
+  const shown =
+    value === null || value === undefined || value === "" ? "" : String(value);
   return `
     <span class="price-field" data-price-field>
       <span class="price-prefix">$</span>

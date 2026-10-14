@@ -2,12 +2,38 @@
 
 import { api } from "./api.js";
 import { icons } from "./icons.js";
-import { esc, money, debounce, statusLabel, conditionLabel, resizeImage } from "./util.js";
+import {
+  esc,
+  money,
+  debounce,
+  statusLabel,
+  conditionLabel,
+  resizeImage,
+} from "./util.js";
 import { coverArt, isSealed } from "./covers.js";
-import { toast, confirmSheet, emptyState, openSheet, spinnerButtonStart, spinnerButtonStop, priceField, wirePriceFields } from "./ui.js";
-import { state, go, back, rerender, upsertTapes, removeTape } from "./app.js";
-import { tapeMascot, soldCelebration } from "./delight.js";
+import {
+  toast,
+  confirmSheet,
+  emptyState,
+  openSheet,
+  spinnerButtonStart,
+  spinnerButtonStop,
+  priceField,
+  wirePriceFields,
+} from "./ui.js";
+import {
+  state,
+  go,
+  back,
+  rerender,
+  refreshTapes,
+  upsertTapes,
+  removeTape,
+} from "./app.js";
+import { soldCelebration } from "./delight.js";
 import { exportCsv, exportXls } from "./exporter.js";
+import { openAddSheet } from "./addflows.js";
+import { cassetteArt } from "./brand.js";
 
 const FILTERS = [
   { id: "all", label: "All" },
@@ -28,14 +54,25 @@ const SORTS = [
 export function filteredTapes() {
   const { query, filter, sort } = state.library;
   let tapes = [...state.tapes];
-  if (filter !== "all") tapes = tapes.filter((t) => (t.status || "keep") === filter);
+  if (filter !== "all")
+    tapes = tapes.filter((t) => (t.status || "keep") === filter);
   if (query) {
     const q = query.toLowerCase();
     tapes = tapes.filter((t) =>
-      [t.title, t.director, t.genre, t.location, t.notes, t.label, t.edition, ...(t.actors || []), ...(t.tags || [])]
+      [
+        t.title,
+        t.director,
+        t.genre,
+        t.location,
+        t.notes,
+        t.label,
+        t.edition,
+        ...(t.actors || []),
+        ...(t.tags || []),
+      ]
         .join(" ")
         .toLowerCase()
-        .includes(q)
+        .includes(q),
     );
   }
   const cmp = {
@@ -53,34 +90,42 @@ export function renderLibrary(root) {
   const lib = state.library;
   const tapes = filteredTapes();
 
+  const active = state.tapes.filter((t) => t.status !== "sold");
+  const asking = active.reduce(
+    (sum, t) => sum + (Number(t.priceAsking) || 0),
+    0,
+  );
   root.innerHTML = `
-    <div class="screen">
-      <h1 class="large-title" style="padding-top:18px">Library</h1>
-      <div class="section-pad" style="padding-top:4px">
-        <div class="view-options">
-          <div class="searchbar">
-            ${icons.search}
-            <input type="search" placeholder="Search tapes…" value="${esc(lib.query)}" data-search autocapitalize="off" />
-          </div>
-          <div class="segmented" style="flex:none">
-            <button data-mode="grid" class="${lib.mode === "grid" ? "active" : ""}" aria-label="Cover view">${icons.grid}</button>
-            <button data-mode="list" class="${lib.mode === "list" ? "active" : ""}" aria-label="List view">${icons.rows}</button>
-            <button data-mode="sheet" class="${lib.mode === "sheet" ? "active" : ""}" aria-label="Spreadsheet view">${icons.table}</button>
-          </div>
-          <button class="sort-btn" data-sort aria-label="Sort">${icons.sortArrows}</button>
-        </div>
-      </div>
-      <div class="chips" style="margin-top:6px">
-        ${FILTERS.map((f) => {
-          const n = countFor(f.id);
-          return `<button class="chip${lib.filter === f.id ? " active" : ""}" data-filter="${f.id}">
-              <span class="chip-label">${f.label}</span>${n ? `<span class="chip-sep"></span><span class="chip-count">${n}</span>` : ""}
-            </button>`;
-        }).join("")}
-      </div>
-      <div class="mt-8" data-list-container></div>
+    <div class="screen library-screen">
+      <div class="page-heading"><div><p class="eyebrow">THE PERSONAL ARCHIVE</p><h1>Your collection.</h1><p>Every find has a story. Keep yours in order.</p></div><button type="button" class="btn gray small" data-add-options>${icons.plus} Add tapes</button></div>
+      <section class="scan-banner" aria-labelledby="scan-banner-title"><div class="scan-banner-copy"><div class="banner-label"><span class="status-dot"></span> MEET YOUR SCANNING ASSISTANT</div><h2 id="scan-banner-title">Big collection.<br>Small effort.</h2><p>A shelf, a stack, a whole haul. Add up to 10 photos<br class="desktop-break"> and turn your tapes into a catalog.</p><button type="button" class="btn" data-start-scan>${icons.camera} Scan your tapes <span aria-hidden="true">↗</span></button><div class="banner-meta">01 CAPTURE <span>→</span> 02 REVIEW <span>→</span> 03 COLLECT</div></div><div class="banner-art">${cassetteArt()}</div></section>
+      <div class="collection-metrics"><div><p>Total tapes</p><strong>${state.tapes.length.toLocaleString()}</strong><span>in your archive</span></div><div><p>For sale</p><strong>${countFor("available").toLocaleString()}</strong><span>ready for a new home</span></div><div><p>Asking value</p><strong>${money(asking) || "$0"}</strong><span>across unsold tapes</span></div><div><p>Keepers</p><strong>${countFor("keep").toLocaleString()}</strong><span>the forever collection</span></div></div>
+      <section class="collection-section" aria-labelledby="collection-title">
+      <div class="collection-heading"><h2 id="collection-title">On the shelves <span>${state.tapes.length}</span></h2><button type="button" class="text-button" data-export>${icons.export} Export collection</button></div>
+      <div class="collection-toolbar"><div class="searchbar">${icons.search}<input type="search" name="search" aria-label="Search collection" placeholder="Search titles, directors, genres…" value="${esc(lib.query)}" data-search autocapitalize="off" /><kbd>/</kbd></div><div class="toolbar-right"><button type="button" class="sort-btn" data-sort aria-label="Sort collection">${icons.sortArrows}<span>${SORTS.find((s) => s.id === lib.sort)?.label || "Sort"}</span></button><div class="segmented view-switch" role="group" aria-label="Collection layout">${[
+        ["grid", "grid", "Cover view"],
+        ["list", "rows", "List view"],
+        ["sheet", "table", "Spreadsheet view"],
+      ]
+        .map(
+          ([mode, icon, label]) =>
+            `<button type="button" data-mode="${mode}" class="${lib.mode === mode ? "active" : ""}" aria-label="${label}" aria-pressed="${lib.mode === mode}">${icons[icon]}</button>`,
+        )
+        .join("")}</div></div></div>
+      <div class="chips collection-filters" role="group" aria-label="Filter by status">${FILTERS.map((f) => `<button type="button" class="chip${lib.filter === f.id ? " active" : ""}" data-filter="${f.id}" aria-pressed="${lib.filter === f.id}"><span class="chip-label">${f.id === "all" ? "All tapes" : f.label}</span><span class="chip-count">${countFor(f.id)}</span></button>`).join("")}</div>
+      <div data-list-container></div></section>
+      <footer class="collection-footer"><span class="mono">NOT JUST TAPES. A TIME CAPSULE.</span><span>Long live physical media.</span></footer>
     </div>`;
-
+  root
+    .querySelector("[data-start-scan]")
+    .addEventListener("click", () => go("scan"));
+  root
+    .querySelector("[data-add-options]")
+    .addEventListener("click", openAddSheet);
+  root.querySelector("[data-export]").addEventListener("click", () => {
+    exportCsv(state.tapes, { accountId: state.user.id });
+    toast("Collection exported.");
+  });
   renderListContainer(root.querySelector("[data-list-container]"), tapes);
 
   const searchInput = root.querySelector("[data-search]");
@@ -88,21 +133,24 @@ export function renderLibrary(root) {
     "input",
     debounce(() => {
       state.library.query = searchInput.value;
-      renderListContainer(root.querySelector("[data-list-container]"), filteredTapes());
-    }, 180)
+      renderListContainer(
+        root.querySelector("[data-list-container]"),
+        filteredTapes(),
+      );
+    }, 180),
   );
 
   root.querySelectorAll("[data-mode]").forEach((btn) =>
     btn.addEventListener("click", () => {
       state.library.mode = btn.dataset.mode;
       rerender();
-    })
+    }),
   );
   root.querySelectorAll("[data-filter]").forEach((btn) =>
     btn.addEventListener("click", () => {
       state.library.filter = btn.dataset.filter;
       rerender();
-    })
+    }),
   );
   root.querySelector("[data-sort]").addEventListener("click", () => {
     const { close } = openSheet({
@@ -112,7 +160,7 @@ export function renderLibrary(root) {
           `<button class="row tappable" data-sortopt="${s.id}">
              <span class="row-label">${s.label}</span>
              <span class="row-value">${state.library.sort === s.id ? icons.check.replace("<svg", '<svg style="width:18px;height:18px;color:var(--tint)"') : ""}</span>
-           </button>`
+           </button>`,
       ).join("")}</div>`,
     });
     document.querySelectorAll("[data-sortopt]").forEach((btn) =>
@@ -120,7 +168,7 @@ export function renderLibrary(root) {
         state.library.sort = btn.dataset.sortopt;
         close();
         rerender();
-      })
+      }),
     );
   });
 }
@@ -132,17 +180,35 @@ function countFor(filterId) {
 
 function renderListContainer(container, tapes) {
   if (!state.loaded) {
+    if (state.loadError) {
+      container.innerHTML = `<div class="empty"><h3>Your collection couldn’t load.</h3><p>${esc(state.loadError)}</p><button type="button" class="btn gray" data-retry-library>Try again</button></div>`;
+      container.querySelector("[data-retry-library]").onclick = async (
+        event,
+      ) => {
+        event.currentTarget.disabled = true;
+        try {
+          await refreshTapes();
+        } catch {
+          /* Error stays visible on retry. */
+        }
+        if (state.view === "library") rerender();
+      };
+      return;
+    }
     container.innerHTML = `<div class="centered-note"><span class="spinner dark" style="margin:0 auto"></span></div>`;
     return;
   }
   if (state.tapes.length === 0) {
     container.innerHTML = `
       <div class="empty fade-in">
-        <div style="margin-bottom:16px">${tapeMascot()}</div>
-        <h3>No tapes yet</h3>
-        <p>Tap the + button and scan a photo of your tapes to get started.</p>
-        <div class="blink-play">▶ INSERT TAPE</div>
+        <div class="empty-tape-icon">${icons.tape}</div>
+        <h3>Your next favorite shelf starts here.</h3>
+        <p>Scan your first stack or add a title to give it a place in the vault.</p>
+        <button type="button" class="text-button" data-empty-scan>Start your first scan ${icons.chevronRight}</button>
       </div>`;
+    container
+      .querySelector("[data-empty-scan]")
+      ?.addEventListener("click", () => go("scan"));
     return;
   }
   if (tapes.length === 0) {
@@ -170,15 +236,29 @@ function renderListContainer(container, tapes) {
         <div class="count-footer">${tapes.length} tape${tapes.length === 1 ? "" : "s"}</div>
       </div>`;
   }
-  container.querySelectorAll("[data-tape]").forEach((el) =>
-    el.addEventListener("click", () => go("detail", el.dataset.tape))
-  );
+  container
+    .querySelectorAll("[data-tape]")
+    .forEach((el) =>
+      el.addEventListener("click", () => go("detail", el.dataset.tape)),
+    );
 }
 
 // ---------- spreadsheet view ----------
 
-const SHEET_STATUS = [["keep", "Keeper"], ["available", "For Sale"], ["hold", "On Hold"], ["sold", "Sold"]];
-const SHEET_CONDITIONS = [["", "—"], ["sealed", "Sealed"], ["mint", "Mint"], ["good", "Good"], ["fair", "Fair"], ["poor", "Poor"]];
+const SHEET_STATUS = [
+  ["keep", "Keeper"],
+  ["available", "For Sale"],
+  ["hold", "On Hold"],
+  ["sold", "Sold"],
+];
+const SHEET_CONDITIONS = [
+  ["", "—"],
+  ["sealed", "Sealed"],
+  ["mint", "Mint"],
+  ["good", "Good"],
+  ["fair", "Fair"],
+  ["poor", "Poor"],
+];
 
 function renderSheetView(container, tapes) {
   container.innerHTML = `
@@ -204,16 +284,24 @@ function renderSheetView(container, tapes) {
       </div>
     </div>`;
 
-  container.querySelectorAll("[data-open]").forEach((el) =>
-    el.addEventListener("click", () => go("detail", el.dataset.open))
-  );
+  container
+    .querySelectorAll("[data-open]")
+    .forEach((el) =>
+      el.addEventListener("click", () => go("detail", el.dataset.open)),
+    );
   container.querySelector("[data-sheet-csv]").addEventListener("click", () => {
-    exportCsv(tapes);
+    exportCsv(tapes, { accountId: state.user.id });
     toast("CSV downloaded.");
   });
-  container.querySelector("[data-sheet-xls]").addEventListener("click", () => {
-    exportXls(tapes);
-    toast("Excel file downloaded.");
+  container.querySelector("[data-sheet-xls]").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const accountId = state.user.id;
+    try {
+      await exportXls(tapes, { accountId });
+      if (state.user?.id === accountId) toast("Excel file downloaded.");
+    } catch (error) { toast(error.message, { error: true }); }
+    finally { button.disabled = false; }
   });
 
   // Inline edits: every cell change PATCHes just that field, then flashes.
@@ -231,7 +319,8 @@ function renderSheetView(container, tapes) {
         const patch = { [field]: value };
         if (field === "status" && value === "sold") {
           const tape = state.tapes.find((t) => t.id === id);
-          if (tape && !tape.soldDate) patch.soldDate = new Date().toISOString().slice(0, 10);
+          if (tape && !tape.soldDate)
+            patch.soldDate = new Date().toISOString().slice(0, 10);
         }
         const { tape: updated } = await api.updateTape(id, patch);
         upsertTapes([updated]);
@@ -270,19 +359,20 @@ function coverCell(tape, index = 0) {
       : status === "hold"
         ? `<span class="cover-badge badge-hold">Hold</span>`
         : status === "keep"
-          ? `<span class="cover-badge badge-keep">Keep</span>`
+          ? `<span class="cover-badge badge-keep">Keeper</span>`
           : "";
   return `
-    <button class="cover-cell" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 14)}">
+    <button type="button" class="cover-cell" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 14)}">
       <div class="cover-art box3d"><span class="box-spine"></span><span class="box-top"></span>${coverArt(tape)}${badge}</div>
       <div class="cover-title">${esc(tape.title)}</div>
-      <div class="cover-sub">${tape.year || ""}${tape.priceAsking != null && status !== "sold" ? `${tape.year ? " · " : ""}${money(tape.priceAsking)}` : ""}</div>
+      <div class="cover-sub">${tape.year || "Year unknown"}${tape.priceAsking != null && status !== "sold" ? `${tape.year ? " · " : ""}${money(tape.priceAsking)}` : ""}</div>
     </button>`;
 }
 
 function listRow(tape, index = 0) {
   const status = tape.status || "keep";
-  const price = status === "sold" ? tape.priceSold ?? tape.priceAsking : tape.priceAsking;
+  const price =
+    status === "sold" ? (tape.priceSold ?? tape.priceAsking) : tape.priceAsking;
   return `
     <button class="tape-row" data-tape="${esc(tape.id)}" style="--i:${Math.min(index, 12)}">
       <div class="tape-thumb">${coverArt(tape)}</div>
@@ -329,7 +419,12 @@ export function renderDetail(root, tapeId) {
           <div class="detail-sub">${[tape.year, tape.rated, tape.runtime].filter(Boolean).map(esc).join(" · ")}</div>
           <div class="pill-row">
             ${isSealed(tape) ? `<span class="pill" style="background:rgba(52,199,89,0.18); color:var(--green)">SEALED</span>` : ""}
-            ${(tape.genre || "").split(",").map((g) => g.trim()).filter(Boolean).map((g) => `<span class="pill">${esc(g)}</span>`).join("")}
+            ${(tape.genre || "")
+              .split(",")
+              .map((g) => g.trim())
+              .filter(Boolean)
+              .map((g) => `<span class="pill">${esc(g)}</span>`)
+              .join("")}
             ${tape.imdbRating ? `<span class="pill">★ ${esc(tape.imdbRating)}</span>` : ""}
             ${tape.packaging ? `<span class="pill">${esc({ slipcase: "Slipcase", bigbox: "Big Box", clamshell: "Clamshell", screener: "Screener", other: "Other pkg." }[tape.packaging] || tape.packaging)}</span>` : ""}
           </div>
@@ -363,7 +458,19 @@ export function renderDetail(root, tapeId) {
           </label>
           <label class="row"><span class="row-label">Packaging</span>
             <select name="packaging">
-              ${[["", "—"], ["slipcase", "Slipcase"], ["bigbox", "Big Box"], ["clamshell", "Clamshell"], ["screener", "Screener"], ["other", "Other"]].map(([v, l]) => `<option value="${v}" ${(tape.packaging || "") === v ? "selected" : ""}>${l}</option>`).join("")}
+              ${[
+                ["", "—"],
+                ["slipcase", "Slipcase"],
+                ["bigbox", "Big Box"],
+                ["clamshell", "Clamshell"],
+                ["screener", "Screener"],
+                ["other", "Other"],
+              ]
+                .map(
+                  ([v, l]) =>
+                    `<option value="${v}" ${(tape.packaging || "") === v ? "selected" : ""}>${l}</option>`,
+                )
+                .join("")}
             </select>
           </label>
           ${textRow("barcode", "Barcode / UPC", tape.barcode, "numeric")}
@@ -418,7 +525,10 @@ export function renderDetail(root, tapeId) {
       title: val("title").trim(),
       year: numOrNull("year"),
       director: val("director").trim(),
-      actors: val("actors").split(",").map((a) => a.trim()).filter(Boolean),
+      actors: val("actors")
+        .split(",")
+        .map((a) => a.trim())
+        .filter(Boolean),
       genre: val("genre").trim(),
       label: val("label").trim(),
       edition: val("edition").trim(),
@@ -428,7 +538,9 @@ export function renderDetail(root, tapeId) {
       condition: val("condition"),
       pricePaid: numOrNull("pricePaid"),
       priceAsking: numOrNull("priceAsking"),
-      ...(form.querySelector("[name=priceSold]") ? { priceSold: numOrNull("priceSold") } : {}),
+      ...(form.querySelector("[name=priceSold]")
+        ? { priceSold: numOrNull("priceSold") }
+        : {}),
       location: val("location").trim(),
       acquiredFrom: val("acquiredFrom").trim(),
       acquiredDate: val("acquiredDate"),
@@ -444,8 +556,15 @@ export function renderDetail(root, tapeId) {
     const coverEl = root.querySelector(".detail-cover");
     const existing = coverEl.querySelector(".seal-glint");
     if (event.target.checked && !existing) {
-      coverEl.insertAdjacentHTML("beforeend", `<span class="seal-glint" aria-hidden="true"></span>`);
-    } else if (!event.target.checked && existing && tape.condition !== "sealed") {
+      coverEl.insertAdjacentHTML(
+        "beforeend",
+        `<span class="seal-glint" aria-hidden="true"></span>`,
+      );
+    } else if (
+      !event.target.checked &&
+      existing &&
+      tape.condition !== "sealed"
+    ) {
       existing.remove();
     }
   });
@@ -495,23 +614,27 @@ export function renderDetail(root, tapeId) {
         </div>`,
     });
     wirePriceFields(document.getElementById("sheet-root"));
-    document.querySelector("[data-confirm-sold]").addEventListener("click", async () => {
-      const raw = document.querySelector("[name=soldFor]").value.replace(/[$,\s]/g, "");
-      const soldFor = raw === "" ? tape.priceAsking : Number(raw);
-      confirmed = true;
-      close();
-      if (
-        await save({
-          status: "sold",
-          priceSold: Number.isFinite(soldFor) ? soldFor : null,
-          soldDate: new Date().toISOString().slice(0, 10),
-        })
-      ) {
-        await soldCelebration(root.querySelector(".detail-cover"));
-        toast("Sold! 🎉");
-        rerender();
-      }
-    });
+    document
+      .querySelector("[data-confirm-sold]")
+      .addEventListener("click", async () => {
+        const raw = document
+          .querySelector("[name=soldFor]")
+          .value.replace(/[$,\s]/g, "");
+        const soldFor = raw === "" ? tape.priceAsking : Number(raw);
+        confirmed = true;
+        close();
+        if (
+          await save({
+            status: "sold",
+            priceSold: Number.isFinite(soldFor) ? soldFor : null,
+            soldDate: new Date().toISOString().slice(0, 10),
+          })
+        ) {
+          await soldCelebration(root.querySelector(".detail-cover"));
+          toast("Sold! 🎉");
+          rerender();
+        }
+      });
   };
 
   const statusSelect = form.querySelector("[name=status]");
@@ -519,17 +642,23 @@ export function renderDetail(root, tapeId) {
     const newStatus = event.target.value;
     if (newStatus === "sold" && tape.status !== "sold") {
       // Route through the sold sheet so priceSold/soldDate get captured.
-      openSoldSheet({ onCancel: () => (statusSelect.value = tape.status || "keep") });
+      openSoldSheet({
+        onCancel: () => (statusSelect.value = tape.status || "keep"),
+      });
     } else if (tape.status === "sold" && newStatus !== "sold") {
       if (await save()) rerender();
     }
   });
 
-  root.querySelector("[data-marksold]")?.addEventListener("click", () => openSoldSheet());
+  root
+    .querySelector("[data-marksold]")
+    ?.addEventListener("click", () => openSoldSheet());
 
   // ----- upload a new cover -----
   const coverInput = root.querySelector("[data-cover-file]");
-  root.querySelector("[data-change-cover]").addEventListener("click", () => coverInput.click());
+  root
+    .querySelector("[data-change-cover]")
+    .addEventListener("click", () => coverInput.click());
   coverInput.addEventListener("change", async () => {
     const file = coverInput.files?.[0];
     coverInput.value = "";
@@ -552,21 +681,24 @@ export function renderDetail(root, tapeId) {
   root.querySelector("[data-value]").addEventListener("click", async () => {
     const current = readForm();
     const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(
-      [current.title, current.year, "VHS"].filter(Boolean).join(" ")
+      [current.title, current.year, current.format || tape.format || "VHS"]
+        .filter(Boolean)
+        .join(" "),
     )}&LH_Sold=1&LH_Complete=1`;
     const { body } = openSheet({
-      title: "Market Value",
+      title: "Estimated resale value",
       content: `
         <div class="value-loading"><span class="spinner dark"></span><p class="centered-note">Sizing up “${esc(current.title)}”…</p></div>
         <div class="value-result" hidden></div>
         <div class="stack mt-16">
-          <a class="btn gray" href="${esc(ebayUrl)}" target="_blank" rel="noopener">See Real Sold Prices on eBay</a>
+          <a class="btn gray" href="${esc(ebayUrl)}" target="_blank" rel="noopener">Check sold listings on eBay</a>
         </div>
-        <p class="hint" style="padding:10px 4px 0; text-align:center">Estimate from collector-market knowledge — always check live comps before pricing a rarity.</p>`,
+        <p class="hint" style="padding:10px 4px 0; text-align:center">AI estimate, not live sales data. Edition, condition and actual sold listings determine value.</p>`,
     });
     try {
       const v = await api.valueEstimate({
         title: current.title,
+        format: current.format || tape.format || "VHS",
         year: current.year,
         edition: current.edition,
         packaging: current.packaging,
@@ -574,9 +706,14 @@ export function renderDetail(root, tapeId) {
         condition: current.condition,
       });
       const result = body.querySelector(".value-result");
-      const demand = { hot: ["🔥 Hot demand", "var(--red)"], steady: ["📈 Steady seller", "var(--green)"], slow: ["🐢 Slow mover", "var(--label-secondary)"] }[v.demand];
-      result.innerHTML = v.known && v.typical != null
-        ? `
+      const demand = {
+        hot: ["High interest", "var(--red)"],
+        steady: ["Steady interest", "var(--green)"],
+        slow: ["Low interest", "var(--label-secondary)"],
+      }[v.demand] || ["Uncertain demand", "var(--label-secondary)"];
+      result.innerHTML =
+        v.known && v.typical != null
+          ? `
           <div class="value-hero">
             <div class="value-big">${money(v.typical)}</div>
             <div class="value-range">${v.low != null && v.high != null ? `${money(v.low)} – ${money(v.high)} range` : ""}</div>
@@ -584,49 +721,54 @@ export function renderDetail(root, tapeId) {
           </div>
           ${v.factors.length ? `<ul class="value-factors">${v.factors.map((f) => `<li>${esc(f)}</li>`).join("")}</ul>` : ""}
           ${v.summary ? `<p class="centered-note" style="padding-top:6px">${esc(v.summary)}</p>` : ""}`
-        : `<p class="centered-note">Not enough market history on this one — check the eBay sold listings below.</p>`;
+          : `<p class="centered-note">Not enough market history on this one — check the eBay sold listings below.</p>`;
       body.querySelector(".value-loading").hidden = true;
       result.hidden = false;
     } catch (err) {
       const loading = body.querySelector(".value-loading");
-      if (loading) loading.innerHTML = `<p class="centered-note">${esc(err.message)}</p>`;
+      if (loading)
+        loading.innerHTML = `<p class="centered-note">${esc(err.message)}</p>`;
     }
   });
 
-  root.querySelector("[data-relookup]").addEventListener("click", async (event) => {
-    const btn = event.currentTarget;
-    spinnerButtonStart(btn);
-    try {
-      const current = readForm();
-      const { results } = await api.enrich([{ title: current.title, year: current.year }]);
-      const hit = results?.[0];
-      if (!hit?.matched) {
-        toast("No details found for that title.", { error: true });
-        return;
+  root
+    .querySelector("[data-relookup]")
+    .addEventListener("click", async (event) => {
+      const btn = event.currentTarget;
+      spinnerButtonStart(btn);
+      try {
+        const current = readForm();
+        const { results } = await api.enrich([
+          { title: current.title, year: current.year },
+        ]);
+        const hit = results?.[0];
+        if (!hit?.matched) {
+          toast("No details found for that title.", { error: true });
+          return;
+        }
+        const { tape: updated } = await api.updateTape(tape.id, {
+          ...current,
+          title: hit.title || current.title,
+          year: hit.year ?? current.year,
+          director: hit.director || current.director,
+          actors: hit.actors?.length ? hit.actors : current.actors,
+          genre: hit.genre || current.genre,
+          runtime: hit.runtime || tape.runtime,
+          rated: hit.rated || tape.rated,
+          plot: hit.plot || tape.plot,
+          imdbRating: hit.imdbRating || tape.imdbRating,
+          imdbId: hit.imdbId || tape.imdbId,
+          posterUrl: hit.posterUrl || tape.posterUrl,
+        });
+        upsertTapes([updated]);
+        toast("Details updated.");
+        rerender();
+      } catch (err) {
+        toast(err.message, { error: true });
+      } finally {
+        spinnerButtonStop(btn);
       }
-      const { tape: updated } = await api.updateTape(tape.id, {
-        ...current,
-        title: hit.title || current.title,
-        year: hit.year ?? current.year,
-        director: hit.director || current.director,
-        actors: hit.actors?.length ? hit.actors : current.actors,
-        genre: hit.genre || current.genre,
-        runtime: hit.runtime || tape.runtime,
-        rated: hit.rated || tape.rated,
-        plot: hit.plot || tape.plot,
-        imdbRating: hit.imdbRating || tape.imdbRating,
-        imdbId: hit.imdbId || tape.imdbId,
-        posterUrl: hit.posterUrl || tape.posterUrl,
-      });
-      upsertTapes([updated]);
-      toast("Details updated.");
-      rerender();
-    } catch (err) {
-      toast(err.message, { error: true });
-    } finally {
-      spinnerButtonStop(btn);
-    }
-  });
+    });
 
   root.querySelector("[data-delete]").addEventListener("click", async () => {
     const yes = await confirmSheet({

@@ -6,7 +6,7 @@
 // the network fails (offline at a swap meet), serving the last good copy.
 // API calls are never cached.
 
-const CACHE = "vhsvault-shell-v2";
+const CACHE = "vhsvault-shell-v3";
 const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", () => {
@@ -28,8 +28,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) {
-    // Google Fonts (icons + Inter) are immutable: cache-first so the tab bar
-    // icons survive offline swap meets after the first visit.
+    // Cache the display/text fonts for offline use after the first visit.
+    // Navigation icons are inline SVG and don't need an external font.
     if (FONT_HOSTS.includes(url.hostname)) {
       event.respondWith(
         caches.match(req).then(

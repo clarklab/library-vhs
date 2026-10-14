@@ -1,5 +1,7 @@
 import { getStore } from "@netlify/blobs";
-import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
+import { sessionVersion } from "./account.mjs";
+export { hashPassword, verifyPassword, updateUserRecord } from "./account.mjs";
 
 // ---------- stores ----------
 
@@ -21,60 +23,92 @@ export function errorResponse(message, status = 400) {
   return json({ error: message }, status);
 }
 
-// ---------- passwords ----------
-
-const SCRYPT_KEYLEN = 64;
-
-export function hashPassword(password) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, SCRYPT_KEYLEN).toString("hex");
-  return `${salt}:${hash}`;
-}
-
-export function verifyPassword(password, stored) {
-  const [salt, hash] = String(stored).split(":");
-  if (!salt || !hash) return false;
-  const candidate = scryptSync(password, salt, SCRYPT_KEYLEN);
-  const expected = Buffer.from(hash, "hex");
-  if (candidate.length !== expected.length) return false;
-  return timingSafeEqual(candidate, expected);
-}
-
 // ---------- sessions ----------
 
-const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+export const SESSION_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+const TOKEN_RE = /^[a-f0-9]{64}$/;
+const COOKIE_NAME = "__Host-vhs_session";
+const LOCAL_COOKIE_NAME = "vhs_session";
 
-export async function createSession(userId) {
+export async function createSession(userId, version = 0, store = sessionsStore()) {
   const token = randomBytes(32).toString("hex");
-  await sessionsStore().setJSON(token, {
+  const session = {
     userId,
+    sessionId: randomBytes(16).toString("hex"),
+    sessionVersion: version,
     expiresAt: Date.now() + SESSION_TTL_MS,
-  });
-  return token;
+  };
+  let writeError;
+  try { await store.setJSON(token, session, { onlyIfNew: true }); } catch (error) { writeError = error; }
+  const confirmed = await store.get(token, { type: "json", consistency: "strong" });
+  if (confirmed?.sessionId !== session.sessionId || confirmed?.userId !== userId) throw writeError || new Error("Session creation could not be confirmed.");
+  return { token, ...session };
 }
 
-export async function destroySession(token) {
-  if (token) await sessionsStore().delete(token);
+export async function destroySession(token, store = sessionsStore()) {
+  if (TOKEN_RE.test(token || "")) await store.delete(token);
+}
+
+export function requestSession(req) {
+  const header = req.headers.get("authorization") || "";
+  if (header.startsWith("Bearer ")) {
+    const token = header.slice(7).trim();
+    return TOKEN_RE.test(token) ? { token, source: "bearer" } : null;
+  }
+  const cookies = (req.headers.get("cookie") || "").slice(0, 8192).split(";");
+  const url = new URL(req.url);
+  const isLocal = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  for (const name of [COOKIE_NAME, ...(isLocal ? [LOCAL_COOKIE_NAME] : [])]) {
+    const cookie = cookies.find((part) => part.trim().startsWith(`${name}=`));
+    const token = cookie?.trim().slice(name.length + 1);
+    if (TOKEN_RE.test(token || "")) return { token, source: "cookie" };
+  }
+  return null;
+}
+
+export function sessionCookie(req, token = "", { clear = false } = {}) {
+  const url = new URL(req.url);
+  const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  return `${localHttp ? LOCAL_COOKIE_NAME : COOKIE_NAME}=${clear ? "" : token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${clear ? 0 : SESSION_TTL_MS / 1000}${localHttp ? "" : "; Secure"}`;
+}
+
+export function sameOriginMutation(req, { requireOrigin = false } = {}) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) return true;
+  const origin = req.headers.get("origin");
+  if (origin) {
+    try { return new URL(origin).origin === new URL(req.url).origin; } catch { return false; }
+  }
+  if (["cross-site", "same-site"].includes(req.headers.get("sec-fetch-site"))) return false;
+  return !requireOrigin;
+}
+
+export function sessionMarker(token, session) {
+  return session.sessionId || createHash("sha256").update(`vhs-public-session:${token}`).digest("hex").slice(0, 32);
 }
 
 /**
  * Resolves the authenticated user for a request, or null.
  * Returns { userId, email, token } on success.
  */
-export async function requireAuth(req) {
-  const header = req.headers.get("authorization") || "";
-  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : null;
-  if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
-
-  const session = await sessionsStore().get(token, { type: "json" });
+export async function requireAuth(req, stores = {}) {
+  const credential = requestSession(req);
+  if (!credential) return null;
+  if (credential.source === "cookie" && !sameOriginMutation(req, { requireOrigin: true })) return null;
+  const { token } = credential;
+  const sessions = stores.sessions || sessionsStore();
+  const users = stores.users || usersStore();
+  const session = await sessions.get(token, { type: "json", consistency: "strong" });
   if (!session) return null;
-  if (session.expiresAt < Date.now()) {
-    await sessionsStore().delete(token);
+  if (!Number.isFinite(session.expiresAt) || session.expiresAt <= Date.now()) {
+    await sessions.delete(token);
     return null;
   }
-  const user = await usersStore().get(session.userId, { type: "json" });
-  if (!user) return null;
-  return { userId: session.userId, email: user.email, user, token };
+  const sessionId = sessionMarker(token, session);
+  const expected = req.headers.get("x-vhs-session");
+  if (expected && expected !== sessionId) return null;
+  const user = await users.get(session.userId, { type: "json", consistency: "strong" });
+  if (!user || user.id !== session.userId || sessionVersion(session) !== sessionVersion(user)) return null;
+  return { userId: session.userId, email: user.email, user, token, sessionId, authSource: credential.source };
 }
 
 // ---------- misc ----------

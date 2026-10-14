@@ -1,10 +1,8 @@
 import { tapesStore, coversStore, json, errorResponse, requireAuth, newId, readBody } from "../lib/util.mjs";
 
-export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
+import { MAX_TAPES_PER_BATCH, mapWithConcurrency, sanitizeTape, saveTapeBatch } from "../lib/tape-batch.mjs";
 
-const CONDITIONS = ["sealed", "mint", "good", "fair", "poor"];
-const STATUSES = ["available", "sold", "hold", "keep"];
-const PACKAGING = ["", "slipcase", "bigbox", "clamshell", "screener", "other"];
+export const config = { path: ["/api/tapes", "/api/tapes/:id"] };
 
 export default async (req, context) => {
   const auth = await requireAuth(req);
@@ -29,7 +27,7 @@ async function listTapes(auth) {
   const prefix = `${auth.userId}/`;
   const { blobs } = await store.list({ prefix });
   const tapes = (
-    await Promise.all(blobs.map((blob) => store.get(blob.key, { type: "json" })))
+    await mapWithConcurrency(blobs, 16, (blob) => store.get(blob.key, { type: "json" }))
   ).filter(Boolean);
   tapes.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
   return json({ tapes });
@@ -37,33 +35,27 @@ async function listTapes(auth) {
 
 async function createTapes(req, auth) {
   const body = await readBody(req);
-  // Accept a single tape or a batch: { tapes: [...] } or { ...tape }
+  // Accept a single tape or a batch: { tapes: [...] } or { ...tape }.
+  if (Object.hasOwn(body, "tapes") && !Array.isArray(body.tapes)) {
+    return errorResponse("Tapes must be an array.");
+  }
   const inputs = Array.isArray(body.tapes) ? body.tapes : [body];
   if (inputs.length === 0) return errorResponse("Nothing to add.");
-  if (inputs.length > 100) return errorResponse("Too many tapes in one request (max 100).");
-
-  const store = tapesStore();
-  const created = [];
-  let failed = 0;
-  for (const input of inputs) {
-    const tape = sanitizeTape(input);
-    if (!tape.title) continue;
-    tape.id = newId();
-    tape.createdAt = new Date().toISOString();
-    tape.updatedAt = tape.createdAt;
-    try {
-      await store.setJSON(`${auth.userId}/${tape.id}`, tape);
-      created.push(tape);
-    } catch (err) {
-      // Report partial success rather than failing the whole batch — a blind
-      // retry would duplicate the tapes that were already written.
-      console.error("tape write failed:", err?.message);
-      failed++;
-    }
+  if (inputs.length > MAX_TAPES_PER_BATCH) {
+    return errorResponse(`Too many tapes in one request (max ${MAX_TAPES_PER_BATCH}).`);
   }
-  if (created.length === 0 && failed === 0) return errorResponse("Every tape needs at least a title.");
-  if (created.length === 0 && failed > 0) return errorResponse("Saving failed. Please try again.", 500);
-  return json({ tapes: created, failedCount: failed }, 201);
+  const result = await saveTapeBatch({
+    store: tapesStore(), userId: auth.userId, inputs, createId: newId,
+    onError: (err) => console.error("tape write could not be confirmed:", err?.message),
+  });
+  if (!result.tapes.length) {
+    const storageFailed = result.failures.some((failure) => failure.code === "save_failed");
+    return json({
+      ...result,
+      error: storageFailed ? "Saving could not be confirmed. Please try again." : "Check the tape details and try again.",
+    }, storageFailed ? 503 : 400);
+  }
+  return json(result, 201);
 }
 
 async function updateTape(req, auth, id) {
@@ -95,65 +87,4 @@ async function deleteTape(auth, id) {
   const cover = String(existing?.posterUrl || "").match(/^\/api\/cover\/([a-f0-9]{32})$/);
   if (cover) await coversStore().delete(cover[1]).catch(() => {});
   return json({ ok: true });
-}
-
-/**
- * Whitelist + coerce tape fields. When `partial` is true, only fields present
- * in the input are returned (for PATCH semantics).
- */
-function sanitizeTape(input, partial = false) {
-  const out = {};
-  const str = (v, max = 500) => String(v ?? "").slice(0, max).trim();
-  const num = (v) => {
-    if (v === null || v === undefined || v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  const fields = {
-    title: (v) => str(v, 300),
-    year: (v) => {
-      const n = num(v);
-      return n && n > 1880 && n < 2100 ? Math.round(n) : null;
-    },
-    director: (v) => str(v, 300),
-    actors: (v) => (Array.isArray(v) ? v.map((a) => str(a, 120)).filter(Boolean).slice(0, 12) : []),
-    genre: (v) => str(v, 120),
-    runtime: (v) => str(v, 40),
-    rated: (v) => str(v, 20),
-    plot: (v) => str(v, 1200),
-    imdbRating: (v) => str(v, 10),
-    imdbId: (v) => str(v, 20),
-    posterUrl: (v) => {
-      const s = str(v, 600);
-      // https for OMDb posters, /api/cover/<id> for user-uploaded covers.
-      return /^https:\/\//.test(s) || /^\/api\/cover\/[a-f0-9]{32}$/.test(s) ? s : "";
-    },
-    format: (v) => str(v, 40) || "VHS",
-    edition: (v) => str(v, 200),
-    label: (v) => str(v, 120),
-    packaging: (v) => (PACKAGING.includes(v) ? v : ""),
-    sealed: (v) => v === true || v === "true" || v === "yes" || v === 1,
-    acquiredDate: (v) => str(v, 30),
-    acquiredFrom: (v) => str(v, 200),
-    barcode: (v) => str(v, 40),
-    condition: (v) => (CONDITIONS.includes(v) ? v : ""),
-    // Tapes are NOT for sale until the owner says so — new tapes default to
-    // "keep" and get flipped to "available" deliberately.
-    status: (v) => (STATUSES.includes(v) ? v : "keep"),
-    pricePaid: num,
-    priceAsking: num,
-    priceSold: num,
-    soldDate: (v) => str(v, 30),
-    location: (v) => str(v, 200),
-    notes: (v) => str(v, 2000),
-    tags: (v) => (Array.isArray(v) ? v.map((t) => str(t, 40)).filter(Boolean).slice(0, 20) : []),
-    source: (v) => str(v, 30),
-  };
-
-  for (const [field, coerce] of Object.entries(fields)) {
-    if (partial && !(field in input)) continue;
-    out[field] = coerce(input[field]);
-  }
-  return out;
 }

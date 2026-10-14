@@ -1,0 +1,60 @@
+{
+  "rotated-spines": {
+    "description": "User sample 1: eight sideways/upside-down VHS spines. Evaluate the original image orientation.",
+    "completeGroundTruth": true,
+    "expectedCount": 8,
+    "expectedTitles": [
+      ["Double Jeopardy"],
+      ["Life Without Dick"],
+      ["Donnie Brasco"],
+      ["Dirty Rotten Scoundrels"],
+      ["The Recruit"],
+      ["Miss Congeniality"],
+      ["Bella Mafia"],
+      ["Gotti"]
+    ],
+    "excludedTitles": []
+  },
+  "mixed-shelves": {
+    "description": "User sample 2: VHS on upper/middle shelves and left rack, DVDs/games below, CDs on right/upper left. This is a partial ground truth: independently annotate all physical VHS boxes before using it as a count benchmark.",
+    "completeGroundTruth": false,
+    "expectedCount": null,
+    "expectedTitles": [
+      ["Schindler's List"],
+      ["The Sons of Katie Elder"],
+      ["The Shootist"],
+      ["True Grit"],
+      ["Sands of Iwo Jima"],
+      ["Independence Day"],
+      ["Se7en", "Seven"],
+      ["Homer and Eddie", "Homer & Eddie"],
+      ["Good Will Hunting"],
+      ["The Last of the Mohicans"],
+      ["Tin Cup"]
+    ],
+    "excludedTitles": [
+      ["Crank"],
+      ["Crank 2", "Crank: High Voltage", "Crank 2: High Voltage"],
+      ["Larry the Cable Guy: Health Inspector", "Health Inspector"],
+      ["Dodgeball", "Dodgeball: A True Underdog Story"],
+      ["The Bourne Supremacy"]
+    ]
+  },
+  "rotated-covers": {
+    "description": "User sample 3: nine VHS front covers on a rug, photographed sideways. Evaluate the original image orientation.",
+    "completeGroundTruth": true,
+    "expectedCount": 9,
+    "expectedTitles": [
+      ["Independence Day"],
+      ["The Count of Monte Cristo"],
+      ["Beethoven"],
+      ["The Fast and the Furious"],
+      ["Deep Blue Sea"],
+      ["Blast from the Past"],
+      ["Jurassic Park"],
+      ["Jaws"],
+      ["Walking Across Egypt"]
+    ],
+    "excludedTitles": []
+  }
+}

@@ -1,58 +1,19 @@
-// Library export: one canonical column set, emitted as CSV or as an
-// Excel-openable .xls (SpreadsheetML 2003 XML — no libraries needed).
+import { collectionTable, COLUMNS, encodeCsv } from "./backup-formats.js";
+import { fileWorker } from "./backup-io.js";
+import { downloadFile } from "./util.js";
+import { getToken } from "./api.js";
 
-import { toCsv, downloadFile, statusLabel, conditionLabel, esc } from "./util.js";
-
-export const EXPORT_HEADERS = [
-  "Title", "Year", "Director", "Actors", "Genre", "Runtime", "Rated", "Studio/Label",
-  "Edition", "Packaging", "Sealed", "Condition", "Status", "Price Paid", "Asking Price",
-  "Sold Price", "Sold Date", "Location", "Where Acquired", "Date Acquired",
-  "Barcode", "Notes", "IMDb Rating", "IMDb ID", "Added",
-];
-
-export function exportRows(tapes) {
-  return tapes.map((t) => [
-    t.title, t.year ?? "", t.director, (t.actors || []).join("; "), t.genre, t.runtime,
-    t.rated, t.label || "", t.edition, t.packaging || "",
-    t.sealed || t.condition === "sealed" ? "yes" : "no",
-    conditionLabel(t.condition) === "—" ? "" : t.condition,
-    statusLabel(t.status), t.pricePaid ?? "", t.priceAsking ?? "", t.priceSold ?? "",
-    t.soldDate ?? "", t.location, t.acquiredFrom || "", t.acquiredDate || "",
-    t.barcode, t.notes, t.imdbRating, t.imdbId,
-    (t.createdAt || "").slice(0, 10),
-  ]);
+export const EXPORT_HEADERS = COLUMNS.map(([,label]) => label);
+export const exportRows = (tapes,options = {}) => collectionTable(tapes,options).slice(1);
+const stamp = () => new Date().toISOString().slice(0,10);
+export function exportCsv(tapes,options = {}) {
+  downloadFile(`vhs-vault-collection-${stamp()}.csv`,encodeCsv(collectionTable(tapes,options)),"text/csv;charset=utf-8");
 }
-
-const stamp = () => new Date().toISOString().slice(0, 10);
-
-export function exportCsv(tapes) {
-  downloadFile(`vhs-vault-${stamp()}.csv`, toCsv([EXPORT_HEADERS, ...exportRows(tapes)]));
+export async function exportXlsx(tapes,options = {}) {
+  const token = getToken();
+  const buffer = await fileWorker("xlsx",{tapes,options});
+  if (getToken() !== token) throw new Error("Your account changed. Export again from the current account.");
+  downloadFile(`vhs-vault-collection-${stamp()}.xlsx`,buffer,"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 }
-
-export function exportXls(tapes) {
-  const rows = exportRows(tapes);
-  const cell = (value) => {
-    const isNumber = typeof value === "number" && Number.isFinite(value);
-    const type = isNumber ? "Number" : "String";
-    const text = isNumber ? String(value) : esc(String(value ?? ""));
-    return `<Cell><Data ss:Type="${type}">${text}</Data></Cell>`;
-  };
-  const row = (cells, style = "") =>
-    `<Row${style}>${cells.map(cell).join("")}</Row>`;
-
-  const xml = `<?xml version="1.0"?>
-<?mso-application progid="Excel.Sheet"?>
-<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
-  xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
- <Styles>
-  <Style ss:ID="head"><Font ss:Bold="1"/></Style>
- </Styles>
- <Worksheet ss:Name="VHS Vault">
-  <Table>
-${row(EXPORT_HEADERS, ' ss:StyleID="head"')}
-${rows.map((r) => row(r)).join("\n")}
-  </Table>
- </Worksheet>
-</Workbook>`;
-  downloadFile(`vhs-vault-${stamp()}.xls`, xml, "application/vnd.ms-excel");
-}
+// Preserve existing callers while replacing the old XML .xls with a real .xlsx.
+export const exportXls = exportXlsx;

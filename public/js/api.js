@@ -1,4 +1,5 @@
-// Minimal API client with bearer-token auth kept in localStorage.
+// New sessions use HttpOnly cookies. localStorage holds only a nonsecret marker
+// for detecting account changes; legacy bearer credentials migrate at /auth/me.
 
 const TOKEN_KEY = "vhsvault.token";
 
@@ -17,55 +18,90 @@ export class ApiError extends Error {
   }
 }
 
-async function request(method, path, body) {
+async function request(method, path, body, { signal, timeoutMs = 45000, expectedToken } = {}) {
   const headers = { "content-type": "application/json" };
   const token = getToken();
-  if (token) headers.authorization = `Bearer ${token}`;
-
-  let res;
+  if (expectedToken !== undefined && token !== expectedToken) throw new ApiError("Your account changed. Sign in again to continue this draft.", 401);
+  if (token?.startsWith("cookie:")) headers["X-VHS-Session"] = token.slice(7);
+  else if (/^[a-f0-9]{64}$/.test(token || "")) headers.authorization = `Bearer ${token}`;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
   try {
-    res = await fetch(path, {
-      method,
-      headers,
+    const res = await fetch(path, {
+      method, headers, signal: controller.signal, credentials: "same-origin",
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  } catch {
-    throw new ApiError("You appear to be offline. Check your connection.", 0);
-  }
-
-  let data = null;
-  try {
-    data = await res.json();
-  } catch {
-    /* non-JSON error body */
-  }
-
-  if (!res.ok) {
-    if (res.status === 401 && getToken()) {
-      setToken(null);
-      window.dispatchEvent(new CustomEvent("vhs:signed-out"));
+    let data = null;
+    try { data = await res.json(); } catch { /* non-JSON error body */ }
+    if (!res.ok) {
+      if (res.status === 401 && token && getToken() === token) {
+        setToken(null);
+        window.dispatchEvent(new CustomEvent("vhs:signed-out"));
+      }
+      const error = new ApiError(data?.error || `Request failed (${res.status})`, res.status);
+      error.code = data?.code;
+      error.retryable = data?.retryable ?? (res.status === 429 || res.status >= 500);
+      error.retryAfterMs = data?.retryAfterMs || 0;
+      error.failures = data?.failures;
+      throw error;
     }
-    throw new ApiError(data?.error || `Request failed (${res.status})`, res.status);
+    if (!data) throw new ApiError("The server returned an incomplete response. Please retry.", 502);
+    if (expectedToken !== undefined && getToken() !== token) throw new ApiError("Your account changed. Sign in again to continue.", 409);
+    return data;
+  } catch (error) {
+    if (signal?.aborted) throw new DOMException("Request paused", "AbortError");
+    if (timedOut) {
+      const timeout = new ApiError("This request took too long. Your work is kept; try again.", 408);
+      timeout.retryable = true;
+      throw timeout;
+    }
+    if (error instanceof ApiError) throw error;
+    const offline = new ApiError("Connection interrupted. Check your connection and try again.", 0);
+    offline.retryable = true;
+    throw offline;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
   }
-  return data;
 }
 
 export const api = {
-  signup: (email, password) => request("POST", "/api/auth/signup", { email, password }),
-  login: (email, password) => request("POST", "/api/auth/login", { email, password }),
-  logout: () => request("POST", "/api/auth/logout"),
-  me: () => request("GET", "/api/auth/me"),
+  signup: (email, password, options = {}) => request("POST", "/api/auth/signup", { email, password }, options),
+  login: (email, password, options = {}) => request("POST", "/api/auth/login", { email, password }, options),
+  logout: (options = {}) => request("POST", "/api/auth/logout", undefined, options),
+  me: (options = {}) => request("GET", "/api/auth/me", undefined, options),
+  updateProfile: (displayName, options = {}) => request("PATCH", "/api/auth/profile", { displayName }, options),
+  changePassword: (currentPassword, newPassword, options = {}) => request("POST", "/api/auth/password", { currentPassword, newPassword }, options),
+  recoveryCode: (currentPassword, options = {}) => request("POST", "/api/auth/recovery", { currentPassword }, options),
+  resetPassword: (email, recoveryCode, newPassword, options = {}) => request("POST", "/api/auth/reset", { email, recoveryCode, newPassword }, options),
+  logoutAll: (currentPassword, options = {}) => request("POST", "/api/auth/logout-all", { currentPassword }, options),
 
-  listTapes: () => request("GET", "/api/tapes"),
-  createTapes: (tapes) => request("POST", "/api/tapes", { tapes }),
-  updateTape: (id, patch) => request("PATCH", `/api/tapes/${id}`, patch),
+  listTapes: (options = {}) => request("GET", "/api/tapes", undefined, options),
+  createTapes: (tapes, options = {}) => request("POST", "/api/tapes", { tapes }, options),
+  updateTape: (id, patch, options = {}) => request("PATCH", `/api/tapes/${id}`, patch, options),
   deleteTape: (id) => request("DELETE", `/api/tapes/${id}`),
 
-  scanPhoto: (imageDataUrl) => request("POST", "/api/scan", { image: imageDataUrl }),
-  enrich: (items) => request("POST", "/api/enrich", { items }),
+  scanPhoto: (imageDataUrl, { mode = "fast", sourceId, verificationContext, ...options } = {}) => request("POST", "/api/scan", { image: imageDataUrl, mode, sourceId, verificationContext }, { timeoutMs: 120000, ...options }),
+  enrich: (items, options = {}) => request("POST", "/api/enrich", { items }, { timeoutMs: 90000, ...options }),
   uploadCover: (tapeId, imageDataUrl) => request("POST", "/api/cover", { tapeId, image: imageDataUrl }),
-  valueEstimate: (tape) => request("POST", "/api/value", tape),
+  valueEstimate: (tape, options = {}) => request("POST", "/api/value", tape, { timeoutMs: 90000, ...options }),
 
-  getSettings: () => request("GET", "/api/settings"),
-  saveSettings: (settings) => request("PUT", "/api/settings", settings),
+  listScouts: (options = {}) => request("GET", "/api/scouts", undefined, options),
+  getScout: (id, options = {}) => request("GET", `/api/scouts/${id}`, undefined, options),
+  deleteScout: (id, options = {}) => request("DELETE", `/api/scouts/${id}`, undefined, options),
+  createScout: (list, options = {}) => request("POST", "/api/scouts", list, options),
+  updateScout: (id, patch, options = {}) => request("PATCH", `/api/scouts/${id}`, patch, options),
+
+  getSettings: (options = {}) => request("GET", "/api/settings", undefined, options),
+  saveSettings: (settings, options = {}) => request("PUT", "/api/settings", settings, options),
+
+  backupManifest: (options = {}) => request("GET", "/api/backup", undefined, options),
+  backupTapes: (cursor, options = {}) => request("GET", `/api/backup/tapes${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, undefined, options),
+  backupScout: (id, cursor, options = {}) => request("GET", `/api/backup/scouts/${encodeURIComponent(id)}${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, undefined, options),
+  backupCover: (id, options = {}) => request("GET", `/api/backup/covers/${encodeURIComponent(id)}`, undefined, options),
+  restoreBackup: (payload, options = {}) => request("POST", "/api/backup/restore", payload, { timeoutMs: 90000, ...options }),
 };

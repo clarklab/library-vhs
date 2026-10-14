@@ -1,89 +1,40 @@
 import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
-import { structured, aiErrorResponse, FriendlyError } from "../lib/ai.mjs";
+import { structured, aiErrorResponse, MODEL } from "../lib/ai.mjs";
+import { MEDIA_FORMATS, VALUE_SCHEMA, VALUE_SYSTEM, normalizeValue } from "../lib/value-contract.mjs";
 
 export const config = { path: "/api/value" };
 
-const VALUE_SCHEMA = {
-  type: "object",
-  properties: {
-    known: {
-      type: "boolean",
-      description: "true if you recognize this film's VHS releases well enough to estimate a market value.",
-    },
-    low: { type: ["number", "null"], description: "Low end of a realistic sale price range in USD." },
-    high: { type: ["number", "null"], description: "High end of a realistic sale price range in USD." },
-    typical: { type: ["number", "null"], description: "The most likely swap-meet / online sale price in USD." },
-    demand: {
-      type: "string",
-      enum: ["hot", "steady", "slow"],
-      description: "Collector demand: hot = actively sought, steady = sells eventually, slow = common shelf stock.",
-    },
-    factors: {
-      type: "array",
-      items: { type: "string" },
-      description: "Up to 4 short bullets on what drives this tape's value (edition, sealed premium, cult status, common print, etc.).",
-    },
-    summary: {
-      type: "string",
-      description: "One or two sentences a seller could read aloud about this tape's market.",
-    },
-  },
-  required: ["known", "low", "high", "typical", "demand", "factors", "summary"],
-  additionalProperties: false,
-};
-
-const SYSTEM = `You estimate resale values of VHS tapes for a collector's inventory app.
-Ground your estimates in the real collector market: most mass-market VHS tapes sell for $2-10, popular titles in nice condition $10-25, sealed tapes carry a large premium (often 3-20x), and genuinely rare tapes (horror, cult, first prints, big-box, Disney Black Diamond variants people actually chase) can run far higher.
-Be honest and conservative: when a tape is common shelf stock, say so. Factor in the specific edition, packaging, sealed status, and condition provided. If you don't recognize the title well enough, set known=false and null prices.
-These are ESTIMATES from market knowledge, not live price data — never imply otherwise in the summary.`;
-
-export default async (req) => {
-  const auth = await requireAuth(req);
-  if (!auth) return errorResponse("Not signed in.", 401);
-  if (req.method !== "POST") return errorResponse("Not found", 404);
-
-  const body = await readBody(req);
-  const title = String(body.title || "").slice(0, 300).trim();
-  if (!title) return errorResponse("Missing title.");
-
-  const detail = {
-    title,
-    year: Number.isFinite(Number(body.year)) ? Number(body.year) : null,
-    edition: String(body.edition || "").slice(0, 200),
-    packaging: String(body.packaging || "").slice(0, 40),
-    sealed: body.sealed === true,
-    condition: String(body.condition || "").slice(0, 20),
-  };
-
-  try {
-    const result = await structured({
-      system: SYSTEM,
-      content: [
-        {
-          type: "text",
-          text: `Estimate the current resale value of this VHS tape:\n${JSON.stringify(detail, null, 2)}`,
-        },
-      ],
-      schema: VALUE_SCHEMA,
-      maxTokens: 1500,
-      effort: "low",
-      timeoutMs: 25000,
-    });
-
-    const num = (v) => (Number.isFinite(v) && v >= 0 ? Math.round(v * 100) / 100 : null);
-    return json({
-      known: result.known === true,
-      low: num(result.low),
-      high: num(result.high),
-      typical: num(result.typical),
-      demand: ["hot", "steady", "slow"].includes(result.demand) ? result.demand : "steady",
-      factors: (Array.isArray(result.factors) ? result.factors : []).slice(0, 4).map((f) => String(f).slice(0, 200)),
-      summary: String(result.summary || "").slice(0, 500),
-    });
-  } catch (err) {
-    if (err instanceof SyntaxError) {
-      return aiErrorResponse(new FriendlyError("The AI returned an unreadable response. Please try again."));
+export function createValueHandler({ authenticate = requireAuth, runStructured = structured } = {}) {
+  return async (req) => {
+    if (req.method !== "POST") return errorResponse("Not found", 404);
+    try {
+      const auth = await authenticate(req);
+      if (!auth) return errorResponse("Not signed in.", 401);
+      const body = await readBody(req);
+      const str = (value, length) => typeof value === "string" ? value.trim().slice(0, length) : "";
+      const title = str(body.title, 300);
+      if (!title) return errorResponse("Missing title.");
+      const format = MEDIA_FORMATS.includes(body.format) ? body.format : body.format === undefined ? "VHS" : "Other";
+      const detail = {
+        title, format,
+        year: body.year != null && body.year !== "" && Number.isInteger(Number(body.year)) ? Number(body.year) : null,
+        edition: str(body.edition, 200), artist: str(body.artist, 200),
+        packaging: str(body.packaging, 40), barcode: str(body.barcode, 40),
+        sealed: body.sealed === true ? true : body.sealed === false ? false : null,
+        condition: str(body.condition, 20) || "unknown",
+      };
+      const result = await runStructured({
+        system: VALUE_SYSTEM,
+        content: [{ type: "text", text: `Provide an uncertain AI resale estimate for this physical media item:\n${JSON.stringify(detail)}` }],
+        schema: VALUE_SCHEMA, maxTokens: 1800, effort: "low", timeoutMs: 25000, signal: req.signal,
+      });
+      // Unknown media or a clearly unidentified title must never acquire a price.
+      const uncertain = format === "Other" || /^(unknown|unreadable|unidentified)(\b|$)/i.test(title);
+      return json({ ...normalizeValue(uncertain ? { ...result, known: false } : result), format, model: MODEL, estimatedAt: new Date().toISOString() }, 200, { "cache-control": "no-store" });
+    } catch (err) {
+      return aiErrorResponse(err);
     }
-    return aiErrorResponse(err);
-  }
-};
+  };
+}
+
+export default createValueHandler();
