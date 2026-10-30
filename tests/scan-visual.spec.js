@@ -1,10 +1,12 @@
 import { test, expect } from "@playwright/test";
+import { scanJobFixture } from "./helpers/scan-jobs.js";
 
 const photo = { name: "three-tapes.svg", mimeType: "image/svg+xml", buffer: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700"><rect width="1200" height="700" fill="#41483c"/>${["JAWS","JURASSIC PARK","UNREADABLE"].map((title,i)=>`<rect x="${170+i*300}" y="90" width="210" height="520" fill="${["#f4d55f","#ef9d87","#dde3cc"][i]}"/><text x="${190+i*300}" y="370" font-size="28" font-family="sans-serif">${title}</text>`).join("")}</svg>`) };
 async function setup(page) {
   const errors = [], saved = [], valueCalls = [];
   page.on("pageerror",e=>errors.push(e.message));
   await page.addInitScript(()=>{localStorage.setItem("vhsvault.token","visual-test");localStorage.setItem("vhsvault.installDismissedAt",String(Date.now()));});
+  const jobs = scanJobFixture();
   await page.route("**/api/**",async(route)=>{
     const path = new URL(route.request().url()).pathname, data = route.request().postDataJSON();
     let response = {};
@@ -13,7 +15,8 @@ async function setup(page) {
       if (route.request().method()==="GET") response={tapes:saved};
       else { saved.push(...data.tapes.map(item=>({...item,id:item.clientId}))); response={tapes:saved,failedCount:0}; }
     }
-    if (path === "/api/scan") response = {
+    if (path.startsWith("/api/scan-jobs/")) return jobs.poll(route);
+    if (path === "/api/scan-jobs") response = {
       tapes:["Jaws","Jurassic Park","Unknown"].map((title,i)=>({title,format:"VHS",year:i===0?1975:i===1?1993:null,sourceIndex:i+1,marker:{x:(275+i*300)/1200,y:.5},confidence:i===2?"low":"high",needsReview:i===2,visual:i===2?"Label obscured":""})),
       verification:{status:"matched",countedCount:3,listedCount:3,uncertainCount:0,positions:[0,1,2].map(i=>({sourceIndex:i+1,label:`Spine ${i+1}`,marker:{x:(275+i*300)/1200,y:.5}}))},
       coverage:{markedCount:3,unplacedCount:0},needsVerification:false,warnings:[],
@@ -22,6 +25,7 @@ async function setup(page) {
       valueCalls.push(data.title);
       response={known:true,low:5,high:9,typical:7,source:"live_web_search",currency:"USD",liveComps:false,estimatedAt:"2026-10-14T15:00:00.000Z",market:{status:"available",basis:"asking",sampleCount:2,askingCount:2,soldCount:0,fetchedAt:"2026-10-14T15:00:00.000Z",listings:[{id:"one",title:`${data.title} VHS used`,url:"https://www.ebay.com/itm/123456789012",price:5,currency:"USD",kind:"asking",condition:"used",evidence:"VHS tape US $5.00"}],warnings:[]}};
     }
+    if (path === "/api/scan-jobs") return jobs.create(route, response);
     await route.fulfill({json:response});
   });
   await page.goto("/"); await page.locator("[data-start-scan]").click();

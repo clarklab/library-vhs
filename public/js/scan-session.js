@@ -1,13 +1,62 @@
 // Durable, account-scoped photo batches. No DOM dependency: queue and save logic are testable.
-import { api, getToken } from "./api.js";
+import { api, getToken, SCAN_REQUEST_TIMEOUT_MS } from "./api.js";
 import { resizeImage } from "./util.js";
 
 export const MAX_PHOTOS = 10;
 export const SCAN_CONCURRENCY = 2;
 export const PRICING_CONCURRENCY = 2;
+export const BACKGROUND_SCAN_TIMEOUT_MS = 8 * 60 * 1000;
 const newId = () => crypto.randomUUID();
 const clone = (value) => structuredClone(value);
 const pendingStatuses = new Set(["queued", "processing", "preparing"]);
+const timestamp = (value) => typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" && Number.isFinite(Date.parse(value)) ? Date.parse(value) : null;
+function waitForPoll(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) { reject(new DOMException("Checking paused", "AbortError")); return; }
+    const aborted = () => { clearTimeout(timer); reject(new DOMException("Checking paused", "AbortError")); };
+    const timer = setTimeout(() => { signal.removeEventListener("abort", aborted); resolve(); }, ms);
+    signal.addEventListener("abort", aborted, { once: true });
+  });
+}
+function jobError(value, fallback = "The background scan could not finish. Try again.") {
+  const detail = value && typeof value === "object" ? value : {};
+  return Object.assign(new Error(errorText(detail.error || detail.message) || fallback), {
+    status: Number.isFinite(detail.status) ? detail.status : null,
+    code: detail.code || "SCAN_JOB_FAILED", retryable: detail.retryable !== false,
+    retryAfterMs: detail.retryAfterMs || 0, requestId: detail.requestId || "",
+    diagnostics: detail.errorDetails && typeof detail.errorDetails === "object" ? detail.errorDetails : null,
+    details: typeof detail.errorDetails === "string" ? detail.errorDetails : "",
+  });
+}
+const errorText = (value, length = 600) => typeof value === "string" ? value.slice(0, length) : "";
+function photoFailure(error, stage, now) {
+  const status = Number.isFinite(error?.status) ? error.status : null;
+  const retryAfterMs = Number.isFinite(error?.retryAfterMs) ? Math.max(0, Math.min(86400000, error.retryAfterMs)) : 0;
+  return {
+    error: errorText(error?.message) || "This photo could not be read. Try again.",
+    errorCode: errorText(error?.code, 100) || (stage === "preparing" ? "IMAGE_PREPARATION_FAILED" : "SCAN_FAILED"),
+    errorStatus: status,
+    retryable: stage !== "preparing" && (typeof error?.retryable === "boolean" ? error.retryable : status === null || status === 0 || [408, 425, 429].includes(status) || status >= 500),
+    retryAfterMs, retryAfter: retryAfterMs ? now + retryAfterMs : 0,
+    requestId: errorText(error?.requestId, 160), errorDetails: errorText(error?.details),
+    errorDiagnostics: error?.diagnostics && typeof error.diagnostics === "object" ? clone(error.diagnostics) : null,
+    errorStage: stage, failedAt: now,
+  };
+}
+function assertScanResponse(response) {
+  if (!response || !Array.isArray(response.tapes) || response.tapes.some((tape) => !tape || typeof tape.title !== "string")) {
+    throw Object.assign(new Error("The scanner returned an incomplete reading. Your photo is kept; try again."), { status: 502, code: "INVALID_SCAN_RESPONSE", retryable: true });
+  }
+  return response;
+}
+
+export function canRetryAfterServiceUpdate(photo) {
+  return Boolean(photo?.status === "error" && photo.image && photo.retryable === false && ([401, 403, 404].includes(photo.errorStatus) || ["AI_CONFIGURATION", "AI_UNAVAILABLE", "ACCOUNT_CHANGED", "AUTH_REQUIRED"].includes(photo.errorCode)));
+}
+
+export function canRetryPhoto(photo, now = Date.now(), { afterServiceUpdate = false } = {}) {
+  return Boolean(photo?.status === "error" && photo.image && (photo.retryable !== false || (afterServiceUpdate && canRetryAfterServiceUpdate(photo))) && (!photo.retryAfter || photo.retryAfter <= now));
+}
 let current = null;
 let opening = null;
 let generation = 0;
@@ -143,12 +192,19 @@ export function requiresPhotoReview(photo, items) {
 }
 
 export function sessionSummary(draft) {
-  if (!draft) return { photos: 0, completed: 0, pending: 0, errors: 0, tapes: 0, needsReview: 0, photoReviews: 0, saved: 0, paused: true };
+  if (!draft) return { photos: 0, completed: 0, pending: 0, preparing: 0, processing: 0, queued: 0, errors: 0, retryableErrors: 0, blockedErrors: 0, waitingErrors: 0, tapes: 0, needsReview: 0, photoReviews: 0, saved: 0, paused: true };
+  const failed = draft.photos.filter((photo) => photo.status === "error");
   return {
     photos: draft.photos.length,
     completed: draft.photos.filter((p) => p.status === "complete").length,
     pending: draft.photos.filter((p) => pendingStatuses.has(p.status)).length,
-    errors: draft.photos.filter((p) => p.status === "error").length,
+    preparing: draft.photos.filter((p) => p.status === "preparing").length,
+    processing: draft.photos.filter((p) => p.status === "processing").length,
+    queued: draft.photos.filter((p) => p.status === "queued").length,
+    errors: failed.length,
+    retryableErrors: failed.filter((photo) => canRetryPhoto(photo)).length,
+    blockedErrors: failed.filter((photo) => !photo.image || photo.retryable === false).length,
+    waitingErrors: failed.filter((photo) => photo.image && photo.retryable !== false && photo.retryAfter > Date.now()).length,
     tapes: draft.items.filter((i) => i.include !== false && !isItemSaved(i)).length,
     needsReview: draft.items.filter(requiresReview).length,
     photoReviews: draft.photos.filter((photo) => requiresPhotoReview(photo, draft.items)).length,
@@ -173,12 +229,15 @@ export function tapePayload(item, draft) {
 }
 
 export class ScanSession {
-  constructor(userId, saved, { client = api, storage = draftStore, resize = resizeImage, id = newId, expectedToken = typeof localStorage === "undefined" ? undefined : getToken() } = {}) {
+  constructor(userId, saved, { client = api, storage = draftStore, resize = resizeImage, id = newId, now = Date.now, transport = "background", wait = waitForPoll, expectedToken = typeof localStorage === "undefined" ? undefined : getToken() } = {}) {
     this.client = client;
     this.expectedToken = expectedToken;
     this.storage = storage;
     this.resize = resize;
     this.id = id;
+    this.now = now;
+    this.transport = transport;
+    this.waitForPoll = wait;
     this.draft = saved || { userId, id: id(), photos: [], items: [], mode: "fast", destination: "collection", scoutName: "", paused: true, location: "", createdAt: Date.now() };
     this.draft.paused = true;
     this.draft.saveDestination ||= this.draft.items.some((item) => item.scoutSavedId) ? "scout" : this.draft.items.some((item) => item.savedId) ? "collection" : undefined;
@@ -190,15 +249,18 @@ export class ScanSession {
       if (item.estimate && !item.estimateFor) item.estimateFor = estimateSubject(item);
     });
     this.draft.photos.forEach((photo) => {
-      if (photo.status === "processing") photo.status = "queued";
+      if (photo.status === "processing") { photo.status = "queued"; photo.stage = "paused"; photo.pausedAt = now(); }
       if (!photo.image && photo.status !== "preparing") {
         photo.status = "error";
-        photo.error = "This photo is no longer on this device. Remove it and choose it again.";
+        Object.assign(photo, photoFailure({ message: "This photo is no longer on this device. Remove it and choose it again.", code: "PHOTO_MISSING", retryable: false }, "preparing", now()));
       }
       if (photo.status === "preparing") {
         photo.status = "error";
-        photo.error = "Photo preparation was interrupted. Remove it and choose it again.";
+        Object.assign(photo, photoFailure({ message: "Photo preparation was interrupted. Remove it and choose it again.", code: "PREPARATION_INTERRUPTED", retryable: false }, "preparing", now()));
       }
+      if (photo.status === "error") photo.stage = "error";
+      photo.stage ||= photo.status;
+      photo.requestTimeoutMs ||= SCAN_REQUEST_TIMEOUT_MS;
     });
     this.listeners = new Set();
     this.controllers = new Map();
@@ -240,21 +302,29 @@ export class ScanSession {
   }
 
   addFiles(files) {
+    if (this.disposed || this.saving || !this.accountMatches()) return { added: 0, skipped: files.length };
     const room = MAX_PHOTOS - this.draft.photos.length;
     const accepted = Array.from(files).slice(0, room);
     for (const file of accepted) {
-      const photo = { id: this.id(), name: file.name || "Camera photo", status: "preparing", image: "", error: "", notes: "", warnings: [] };
+      const photo = { id: this.id(), name: file.name || "Camera photo", status: "preparing", stage: "preparing", addedAt: this.now(), stageStartedAt: this.now(), attemptCount: 0, requestTimeoutMs: SCAN_REQUEST_TIMEOUT_MS, image: "", error: "", notes: "", warnings: [] };
       this.draft.photos.push(photo);
       this.preparing++;
       this.prepareChain = this.prepareChain.then(async () => {
         try {
           if (this.disposed || !this.draft.photos.includes(photo)) return;
+          photo.preparationStartedAt = this.now();
+          photo.stageStartedAt = photo.preparationStartedAt;
+          this.emit();
           photo.image = await this.resize(file, 2400, 0.88);
           if (this.disposed || !this.draft.photos.includes(photo)) return;
           photo.status = "queued";
+          photo.stage = "queued";
+          photo.queuedAt = photo.stageStartedAt = this.now();
         } catch (error) {
+          if (this.disposed || !this.draft.photos.includes(photo)) return;
           photo.status = "error";
-          photo.error = error.message || "This image could not be opened. Try a JPEG or PNG photo.";
+          Object.assign(photo, photoFailure(error, "preparing", this.now()));
+          photo.stage = "error"; photo.finishedAt = this.now();
         } finally {
           this.preparing = Math.max(0, this.preparing - 1);
           if (!this.disposed) { await this.changed({ immediate: true }); this.pump(); }
@@ -265,35 +335,105 @@ export class ScanSession {
     return { added: accepted.length, skipped: Math.max(0, files.length - accepted.length) };
   }
 
-  resume() { this.draft.paused = false; this.changed(); this.pump(); }
-  pause() {
+  resume() { if (this.disposed || this.saving || !this.accountMatches()) return; this.draft.paused = false; this.draft.pauseReason = ""; this.changed(); this.pump(); }
+  pause({ reason = "" } = {}) {
     this.draft.paused = true;
+    this.draft.pauseReason = reason;
     this.pausePricing({ notify: false });
     for (const controller of this.controllers.values()) controller.abort();
-    this.draft.photos.forEach((photo) => { if (photo.status === "processing") photo.status = "queued"; });
+    this.draft.photos.forEach((photo) => { if (photo.status === "processing") { photo.status = "queued"; photo.stage = "paused"; photo.pausedAt = this.now(); } });
     this.changed({ immediate: true });
   }
   dispose() { this.pause(); this.disposed = true; this.listeners.clear(); this.enrichController?.abort(); this.persistChain.finally(() => this.releaseLock?.()); }
   pump() {
-    if (this.disposed || this.draft.paused) return;
+    if (this.disposed || this.draft.paused || this.saving || !this.accountMatches()) return;
     while (this.controllers.size < SCAN_CONCURRENCY) {
       const photo = this.draft.photos.find((p) => p.status === "queued" && p.image && !this.controllers.has(p.id));
       if (!photo) return;
       this.runPhoto(photo);
     }
   }
+  async readBackgroundPhoto(photo, signal) {
+    photo.background = true;
+    photo.requestTimeoutMs = BACKGROUND_SCAN_TIMEOUT_MS;
+    photo.jobCheckStartedAt = this.now();
+    const active = () => !this.disposed && !signal.aborted && this.accountMatches() && this.draft.photos.includes(photo);
+    if (!photo.jobClientId) {
+      photo.jobClientId = this.id();
+      photo.jobMode = this.draft.mode;
+      photo.jobCreatedAt = this.now();
+      photo.jobStatus = "queued";
+    }
+    // A lost create response must still have a durable key for the same job.
+    if (!await this.persist()) throw Object.assign(new Error("This device could not save the photo’s job ID. Free some storage and retry; no new scan has been sent."), { code: "DRAFT_STORAGE_UNAVAILABLE", retryable: true });
+    if (!active()) throw new DOMException("Checking paused", "AbortError");
+    const create = () => this.client.createScanJob({ image: photo.image, clientId: photo.jobClientId, sourceId: photo.id, mode: photo.jobMode || this.draft.mode }, { signal, expectedToken: this.expectedToken });
+    let envelope = !photo.jobId || photo.redispatchRequested ? await create() : await this.client.getScanJob(photo.jobId, { signal, expectedToken: this.expectedToken });
+    delete photo.redispatchRequested;
+    while (active()) {
+      const job = envelope?.job;
+      if (!job?.id || !["queued", "running", "complete", "completed", "failed", "expired"].includes(job.status)) throw Object.assign(new Error("The server returned an incomplete scan update. Your photo is kept; try checking again."), { code: "INVALID_JOB_RESPONSE", status: 502, retryable: true });
+      photo.jobId = job.id;
+      photo.jobStatus = job.status;
+      photo.jobCreatedAt = timestamp(job.createdAt) ?? photo.jobCreatedAt;
+      photo.jobUpdatedAt = timestamp(job.updatedAt) ?? this.now();
+      photo.startedAt = timestamp(job.startedAt) ?? photo.jobCreatedAt ?? photo.startedAt;
+      photo.jobDeadlineAt = timestamp(job.deadlineAt) ?? timestamp(job.leaseExpiresAt) ?? null;
+      photo.jobExpiresAt = timestamp(job.expiresAt);
+      photo.dispatchError = job.dispatchError || null;
+      if (job.progress && typeof job.progress === "object") {
+        photo.jobProgress = {
+          countFinished: job.progress.countFinished === true,
+          ...(Number.isInteger(job.progress.independentCount) && job.progress.independentCount >= 0 && job.progress.independentCount <= 1000 ? { independentCount: job.progress.independentCount } : {}),
+        };
+      }
+      const stage = ["reading", "counting", "verifying"].includes(job.stage) ? job.stage : job.status === "queued" ? "queued" : "reading";
+      if (photo.stage !== stage) { photo.stage = stage; photo.stageStartedAt = this.now(); }
+      if (job.result?.tapes) photo.initialResult = assertScanResponse(job.result);
+      await this.changed({ immediate: true });
+      if (!active()) throw new DOMException("Checking paused", "AbortError");
+      if (["complete", "completed"].includes(job.status)) return assertScanResponse({ ...job.result, ...(!job.result?.verificationFailure && job.verificationFailure ? { verificationFailure: job.verificationFailure } : {}) });
+      if (["failed", "expired"].includes(job.status)) {
+        if (photo.initialResult?.tapes) return { ...photo.initialResult, needsVerification: true, verificationFailure: job.error || { error: "The follow-up check could not finish.", code: "SCAN_JOB_INTERRUPTED", retryable: true } };
+        throw jobError(job.error, job.status === "expired" ? "The background scan expired. Retry this photo to start a new scan." : undefined);
+      }
+      const queuedFor = this.now() - Math.max(photo.jobCreatedAt, photo.jobCheckStartedAt);
+      if (job.status === "queued" && queuedFor >= 30000 && !photo.jobDispatchRetried) {
+        photo.jobDispatchRetried = true;
+        await this.changed({ immediate: true });
+        envelope = await create();
+        continue;
+      }
+      if (job.status === "queued" && queuedFor >= 60000) throw Object.assign(new Error("The background scanner has not started yet. Try checking again to reconnect this same job."), { code: "SCAN_JOB_QUEUED", status: 503, retryable: true });
+      const deadline = photo.jobDeadlineAt || photo.jobCreatedAt + BACKGROUND_SCAN_TIMEOUT_MS;
+      if (this.now() > deadline + 60000) throw Object.assign(new Error("This scan is taking longer than expected. Your job is kept; check again for its result."), { code: "SCAN_JOB_WAIT_TIMEOUT", status: 408, retryable: true });
+      await this.waitForPoll(Math.max(750, Math.min(10000, Number(envelope.pollAfterMs) || 1500)), signal);
+      if (!active()) throw new DOMException("Checking paused", "AbortError");
+      envelope = await this.client.getScanJob(photo.jobId, { signal, expectedToken: this.expectedToken });
+    }
+    throw new DOMException("Checking paused", "AbortError");
+  }
   async runPhoto(photo) {
     const controller = new AbortController();
     this.controllers.set(photo.id, controller);
     photo.status = "processing";
-    photo.stage = "reading";
+    photo.stage = this.transport === "background" ? "queued" : "reading";
+    photo.startedAt = photo.stageStartedAt = this.now();
+    photo.finishedAt = null;
+    photo.pausedAt = null;
+    photo.attemptCount = (photo.attemptCount || 0) + 1;
+    photo.requestTimeoutMs = this.transport === "background" ? BACKGROUND_SCAN_TIMEOUT_MS : SCAN_REQUEST_TIMEOUT_MS;
     photo.error = "";
+    for (const field of ["errorCode", "errorStatus", "errorDetails", "errorDiagnostics", "errorStage", "requestId", "retryAfterMs", "retryAfter", "retryable"]) delete photo[field];
     const mode = this.draft.mode;
     this.changed();
     try {
-      let response = photo.initialResult;
-      if (!response) {
-        response = await this.client.scanPhoto(photo.image, { signal: controller.signal, mode, sourceId: photo.id, expectedToken: this.expectedToken });
+      const background = this.transport === "background";
+      const recoveredLegacyReading = background && photo.initialResult && !photo.jobId && !photo.jobClientId;
+      let response = background && !recoveredLegacyReading ? await this.readBackgroundPhoto(photo, controller.signal) : photo.initialResult;
+      if (response) assertScanResponse(response);
+      if (!background && !response) {
+        response = assertScanResponse(await this.client.scanPhoto(photo.image, { signal: controller.signal, mode, sourceId: photo.id, expectedToken: this.expectedToken }));
         if (this.disposed || !this.draft.photos.includes(photo)) return;
         photo.initialResult = response;
         photo.initialMode = mode;
@@ -301,14 +441,20 @@ export class ScanSession {
       }
       if (this.disposed || controller.signal.aborted || !this.draft.photos.includes(photo)) return;
       photo.verification = response.verification || null;
-      photo.verificationError = photo.verificationAttempted && !photo.verified ? "Double-checking was interrupted. Your first reading is kept; check this photo before saving." : "";
+      photo.verificationError = !background && photo.verificationAttempted && !photo.verified ? "Double-checking was interrupted. Your first reading is kept; check this photo before saving." : "";
+      if (recoveredLegacyReading) photo.verificationError = "Your saved first reading was recovered. Check this photo before saving.";
+      if (response.verificationFailure) {
+        photo.verificationFailure = photoFailure(jobError(response.verificationFailure), "verifying", this.now());
+        photo.verificationError = `${photo.verificationFailure.error} Your first reading is kept; check this photo before saving.`;
+      }
       // One stronger pass only. Retain the first reading if verification is unavailable.
-      if ((photo.initialMode || mode) !== "thorough" && response.needsVerification && !photo.verificationAttempted) {
+      if (!background && (photo.initialMode || mode) !== "thorough" && response.needsVerification && !photo.verificationAttempted) {
         photo.verificationAttempted = true;
         photo.stage = "verifying";
+        photo.stageStartedAt = this.now();
         await this.changed({ immediate: true });
         try {
-          const verified = await this.client.scanPhoto(photo.image, {
+          const verified = assertScanResponse(await this.client.scanPhoto(photo.image, {
             signal: controller.signal, mode: "thorough", sourceId: photo.id, expectedToken: this.expectedToken,
             verificationContext: {
               countedCount: response.verification?.countedCount ?? null,
@@ -316,7 +462,7 @@ export class ScanSession {
               tapes: response.tapes,
               countPositions: response.verification?.positions,
             },
-          });
+          }));
           if (Array.isArray(verified?.tapes)) {
             // The verifier may add, remove or reorder rows. sourceIndex is a
             // reading order, not a stable physical ID: never borrow its old pin.
@@ -325,13 +471,15 @@ export class ScanSession {
           }
         } catch (error) {
           if (controller.signal.aborted) throw error;
-          photo.verificationError = "The closer look was unavailable. Your first reading is kept; check this photo before saving.";
+          photo.verificationFailure = photoFailure(error, "verifying", this.now());
+          photo.verificationError = `${photo.verificationFailure.error} Your first reading is kept; check this photo before saving.`;
         }
       }
       if (this.disposed || controller.signal.aborted || !this.draft.photos.includes(photo)) return;
       const tapes = Array.isArray(response?.tapes) ? response.tapes : [];
       photo.status = "complete";
       photo.stage = "complete";
+      photo.finishedAt = this.now();
       photo.verification = response.verification || null;
       photo.coverage = response.coverage || null;
       photo.needsPhotoReview = Boolean(photo.needsPhotoReview || photo.verificationError || !response.verification || response.verification.status !== "matched" || response.verification.uncertainCount > 0 || photo.coverage?.unplacedCount > 0 || photo.coverage?.overlapCount > 0 || photo.coverage?.independentUnplacedCount > 0 || photo.coverage?.independentOverlapCount > 0 || tapes.some((item) => (Object.hasOwn(item, "marker") && !normalizeMarker(item.marker)) || item.markerIssue === "overlap"));
@@ -339,9 +487,10 @@ export class ScanSession {
       photo.notes = response.notes || "";
       photo.warnings = response.warnings || [];
       photo.model = response.model;
-      photo.mode = response.mode || mode;
+      photo.mode = response.mode || photo.jobMode || mode;
       photo.reportedCount = response.reportedCount ?? response.count ?? tapes.length;
       photo.durationMs = response.durationMs;
+      photo.requestId = errorText(response.requestId, 160);
       this.draft.items.push(...tapes.map((tape, index) => ({
         ...tape, title: String(tape.title || ""), format: tape.format || "unknown", clientId: this.id(), photoId: photo.id,
         sourceIndex: tape.sourceIndex || index + 1, marker: normalizeMarker(tape.marker), include: true, confirmed: false, pricingStatus: "idle", pricingError: "",
@@ -354,12 +503,17 @@ export class ScanSession {
       await this.changed({ immediate: true });
     } catch (error) {
       if (this.disposed || !this.draft.photos.includes(photo)) return;
-      if (controller.signal.aborted) photo.status = "queued";
+      if (controller.signal.aborted) { photo.status = "queued"; photo.stage = "paused"; photo.pausedAt ||= this.now(); }
       else {
+        if (["SCAN_JOB_NOT_FOUND", "JOB_NOT_FOUND"].includes(error.code) && photo.jobId) {
+          photo.jobStatus = "expired";
+          error.retryable = true;
+          error.message = "This saved scan is no longer available. Retry to start a new scan from your photo.";
+        }
         photo.status = "error";
-        photo.error = error.message || "This photo could not be read. Try again.";
-        photo.retryable = error.retryable !== false;
-        photo.retryAfter = Date.now() + (error.retryAfterMs || 0);
+        Object.assign(photo, photoFailure(error, photo.stage, this.now()));
+        photo.stage = "error"; photo.finishedAt = this.now();
+        if ([0, 401, 403, 404, 429, 503].includes(photo.errorStatus) || ["AI_CONFIGURATION", "AI_UNAVAILABLE", "ACCOUNT_CHANGED", "DRAFT_STORAGE_UNAVAILABLE"].includes(photo.errorCode)) this.pause({ reason: photo.error });
       }
       this.changed({ immediate: true });
     } finally {
@@ -368,12 +522,32 @@ export class ScanSession {
       this.pump();
     }
   }
-  retryPhoto(id) {
+  retryPhoto(id, options = {}) {
     const photo = this.draft.photos.find((p) => p.id === id);
-    if (!photo?.image || photo.status !== "error") return;
+    if (this.disposed || this.saving || !this.accountMatches() || !canRetryPhoto(photo, this.now(), options)) return false;
+    this.prepareJobRetry(photo);
     photo.status = "queued";
-    photo.error = "";
+    photo.stage = "queued";
+    photo.queuedAt = photo.stageStartedAt = this.now();
     this.resume();
+    return true;
+  }
+  retryFailedPhotos() {
+    let retried = 0, blocked = 0, waiting = 0;
+    if (this.disposed || this.saving || !this.accountMatches()) return { retried, blocked, waiting };
+    for (const photo of this.draft.photos.filter((entry) => entry.status === "error")) {
+      if (!photo.image || photo.retryable === false) { blocked++; continue; }
+      if (!canRetryPhoto(photo, this.now())) { waiting++; continue; }
+      this.prepareJobRetry(photo);
+      photo.status = "queued"; photo.stage = "queued"; photo.queuedAt = photo.stageStartedAt = this.now(); retried++;
+    }
+    if (retried) this.resume();
+    return { retried, blocked, waiting };
+  }
+  prepareJobRetry(photo) {
+    if (["failed", "expired"].includes(photo.jobStatus)) {
+      for (const key of ["jobId", "jobClientId", "jobStatus", "jobMode", "jobCreatedAt", "jobUpdatedAt", "jobDeadlineAt", "jobExpiresAt", "jobDispatchRetried", "jobProgress", "initialResult", "verificationAttempted", "verificationFailure", "verificationError", "verified"]) delete photo[key];
+    } else if (photo.jobStatus === "queued" && photo.jobId) photo.redispatchRequested = true;
   }
   removePhoto(id) {
     if (this.saving) return;

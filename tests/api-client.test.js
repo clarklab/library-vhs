@@ -102,3 +102,75 @@ test("successful late auth and backup responses cannot cross an account change",
     } finally { env.restore(); }
   }
 });
+
+test("non-JSON platform timeouts expose an actionable reason and request ID", async () => {
+  const env = environment();
+  try {
+    globalThis.fetch = async () => new Response('<html><style>secret-style</style><h1>Gateway Timeout</h1><p>Function timed out.</p><script>secret-script</script></html>', {
+      status: 504, headers: { "content-type": "text/html", "x-nf-request-id": "platform-request-123", "retry-after": "3" },
+    });
+    await assert.rejects(api.scanPhoto("photo"), (error) => {
+      assert.equal(error.status, 504); assert.equal(error.code, "HTTP_504"); assert.equal(error.retryable, true);
+      assert.match(error.message, /reconnect and check again/);
+      assert.equal(error.requestId, "platform-request-123"); assert.equal(error.retryAfterMs, 3000);
+      assert.equal(error.details, "Gateway Timeout Function timed out.");
+      return true;
+    });
+  } finally { env.restore(); }
+});
+
+test("oversize and permanent configuration failures do not become blind retry requests", async () => {
+  const env = environment();
+  try {
+    globalThis.fetch = async () => new Response("Payload too large", { status: 413 });
+    await assert.rejects(api.scanPhoto("photo"), (error) => error.code === "HTTP_413" && error.retryable === false && /smaller photo/.test(error.message));
+    globalThis.fetch = async () => Response.json({ error: "Gateway configuration needs attention", code: "AI_CONFIGURATION", retryable: false, requestId: "backend-id", errorDetails: "Model is unavailable" }, { status: 502 });
+    await assert.rejects(api.scanPhoto("photo"), (error) => error.retryable === false && error.requestId === "backend-id" && error.details === "Model is unavailable");
+  } finally { env.restore(); }
+});
+
+test("an HTML success response is an error rather than an empty successful scan", async () => {
+  const env = environment();
+  try {
+    globalThis.fetch = async () => new Response("<h1>Site not found</h1>" + "x".repeat(1000), { status: 200 });
+    await assert.rejects(api.scanPhoto("photo"), (error) => error.code === "INVALID_RESPONSE" && error.retryable === true && error.details.length === 600);
+  } finally { env.restore(); }
+});
+
+test("already-paused calls send no request and preserve an AbortError", async () => {
+  const env = environment();
+  try {
+    globalThis.fetch = async () => assert.fail("An already-aborted request must not upload a photo");
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(api.scanPhoto("photo", { signal: controller.signal }), (error) => error.name === "AbortError");
+  } finally { env.restore(); }
+});
+
+test("safe backend diagnostic fields remain structured and readable without retaining arbitrary data", async () => {
+  const env = environment();
+  try {
+    globalThis.fetch = async () => Response.json({ error: "Timed out", code: "AI_TIMEOUT", retryable: true, errorDetails: { stage: "identification", durationMs: 38000, providerStatus: 504, providerType: "timeout", providerRequestId: "provider-123", rawPhoto: "must-not-copy" } }, { status: 504 });
+    await assert.rejects(api.scanPhoto("photo"), (error) => {
+      assert.deepEqual(error.diagnostics, { stage: "identification", durationMs: 38000, providerStatus: 504, providerType: "timeout", providerRequestId: "provider-123" });
+      assert.match(error.details, /Stage: identification.*Duration: 38000 ms/);
+      assert.equal(error.details.includes("must-not-copy"), false);
+      return true;
+    });
+  } finally { env.restore(); }
+});
+
+test("background job creation and polling use authenticated account-pinned endpoints", async () => {
+  const env = environment("cookie:job-owner");
+  const requests = [];
+  try {
+    globalThis.fetch = async (path, options) => { requests.push({ path, ...options }); return Response.json({ job: { id: "job-one", status: "queued" } }); };
+    await api.createScanJob({ image: "photo", clientId: "stable-key", sourceId: "source-one", mode: "fast" }, { expectedToken: "cookie:job-owner" });
+    await api.getScanJob("job-one", { expectedToken: "cookie:job-owner" });
+    assert.equal(requests[0].path, "/api/scan-jobs"); assert.equal(requests[0].method, "POST"); assert.equal(JSON.parse(requests[0].body).clientId, "stable-key");
+    assert.equal(requests[1].path, "/api/scan-jobs/job-one"); assert.equal(requests[1].method, "GET");
+    assert.equal(requests.every((request) => request.headers["X-VHS-Session"] === "job-owner"), true);
+    env.setToken("cookie:another-owner");
+    await assert.rejects(api.getScanJob("job-one", { expectedToken: "cookie:job-owner" }), /account changed/);
+    assert.equal(requests.length, 2);
+  } finally { env.restore(); }
+});

@@ -2,10 +2,11 @@ import { icons } from "./icons.js";
 import { openPhotoPreview } from "./photo-preview.js";
 import { createPhotoMap, tapePins, countPins, markerPoint } from "./photo-markers.js";
 import { marketLabel, marketMeta, marketEvidence } from "./market-view.js";
+import { createScanFeedback } from "./scan-feedback.js";
 import { esc } from "./util.js";
 import { openSheet, toast } from "./ui.js";
 import { state, go, upsertTapes } from "./app.js";
-import { openScanSession, MAX_PHOTOS, sessionSummary, duplicateWarnings, requiresReview, isItemSaved, photoCountMismatch } from "./scan-session.js";
+import { openScanSession, MAX_PHOTOS, sessionSummary, duplicateWarnings, requiresReview, isItemSaved, photoCountMismatch, canRetryPhoto } from "./scan-session.js";
 
 let unsubscribe, disposeMap;
 let renderEpoch = 0;
@@ -36,6 +37,7 @@ export async function renderScan(root) {
     <p class="scan-storage-warning" data-storage-warning role="alert" hidden></p>
     <section class="scan-upload-panel" data-dropzone><div data-upload-copy><span class="scan-upload-icon">${icons.camera}</span><h2>Start with your shelf.</h2><p>Use a few clear photos, up to 10 at a time.</p></div><div class="scan-capture-actions"><button class="btn" type="button" data-camera>${icons.camera} Take a photo</button><button class="btn gray" type="button" data-upload>${icons.photo} Choose photos</button></div><input type="file" accept="image/*" capture="environment" hidden data-file-camera /><input type="file" accept="image/*" multiple hidden data-file-library /><p class="scan-upload-tip" data-upload-tip>Closer photos make small spines easier to read. You can also drop photos here.</p></section>
     <section class="scan-batch" data-batch hidden><div class="scan-photo-strip" data-photos aria-label="Your photos"></div><div class="scan-batch-controls"><p data-queue-status role="status"></p><details class="scan-reading-options"><summary>Reading options</summary><label for="scan-mode">Photo detail</label><select id="scan-mode" data-mode><option value="fast">Everyday</option><option value="thorough">Extra care for tricky labels</option></select></details><button class="btn" data-run disabled>Read photos</button></div></section>
+    <section data-scan-feedback aria-label="Scan progress" hidden></section>
     <div class="scan-visual-workspace" data-visual-workspace hidden>
       <section class="scan-photo-panel" aria-label="Check the photo"><div class="scan-map-heading"><div><h2 data-photo-heading>Photo 1</h2><p data-photo-coverage></p></div><button class="btn gray" data-expand aria-label="Enlarge selected photo">${icons.search} Enlarge</button></div><div data-photo-map></div>
         <div class="scan-map-legend"><span><i></i> <span data-marker-legend>A dot links to a title</span></span><button class="scan-text-button" data-compare-count hidden>Compare count</button></div>
@@ -48,7 +50,7 @@ export async function renderScan(root) {
       </section>
       <section class="scan-results-panel" aria-labelledby="scan-results-heading"><div class="scan-results-heading"><div><p class="eyebrow">MATCH THE NUMBERS</p><h2 id="scan-results-heading">Your tapes <span data-result-count>0</span></h2></div><button class="btn gray" data-prices>Check live prices</button></div><div class="scan-price-progress" data-price-progress hidden role="status"><span data-price-message></span><button class="scan-text-button" data-pause-prices>Pause</button></div>
         <div class="scan-result-tools"><div class="scan-review-filters" role="group" aria-label="Filter recognized tapes"><button class="active" data-filter="all" aria-pressed="true">All</button><button data-filter="review" aria-pressed="false">Check <span data-count-review>0</span></button><button data-filter="duplicates" aria-pressed="false">Repeats <span data-count-duplicates>0</span></button></div><label class="scan-search">${icons.search}<input type="search" placeholder="Find a title" aria-label="Find a title in this batch" data-search /></label></div>
-        <div class="scan-review-empty" data-empty><span class="scan-empty-reels">${icons.tape}</span><h3>Ready when you are.</h3><p>Read your photos to see the titles and their dots.</p></div><p class="scan-review-notice" data-review-notice hidden></p><div class="scan-review-list" data-items></div><button class="btn gray scan-show-more" data-more hidden>Show more titles</button>
+        <div class="scan-review-empty" data-empty><span class="scan-empty-reels">${icons.tape}</span><h3 data-empty-title>Ready when you are.</h3><p data-empty-description>Read your photos to see the titles and their dots.</p></div><p class="scan-review-notice" data-review-notice hidden></p><div class="scan-review-list" data-items></div><button class="btn gray scan-show-more" data-more hidden>Show more titles</button>
       </section>
     </div>
     <section class="scan-finish" data-finish hidden><div class="scan-finish-heading"><div><p class="eyebrow">WHAT WOULD YOU LIKE TO KEEP?</p><h2 data-save-summary></h2><p data-save-detail></p></div><div class="scan-finish-actions"><button class="btn" data-save data-destination="collection">${icons.library} Add to shelf</button><button class="btn gray" data-save-scout data-destination="scout">${icons.search} Just browsing</button></div></div><p class="scan-save-error" data-save-error role="alert" hidden></p><details class="scan-extra-options"><summary>Optional details</summary><button class="btn gray" data-enrich>${icons.sparkles} Add film details</button><p class="hint" data-enrich-message></p><div class="scan-bulk-fields"><label>Paid per tape ($)<input type="number" min="0" step="0.01" inputmode="decimal" data-paid placeholder="0.00" /></label><label>Asking price ($)<input type="number" min="0" step="0.01" inputmode="decimal" data-asking placeholder="0.00" /></label><label>Storage location<input data-location maxlength="160" placeholder="Shelf or box" /></label></div></details><button class="scan-text-button" data-library>Back to collection</button></section>
@@ -58,8 +60,17 @@ export async function renderScan(root) {
   const activePhoto = () => session.draft.photos.find((photo) => photo.id === activePhotoId);
   const photoItems = (photo) => session.draft.items.filter((item) => item.photoId === photo?.id).map((item) => ({ ...item, displayNumber: session.draft.items.indexOf(item) + 1 }));
   const map = createPhotoMap($("[data-photo-map]"), { onSelect: selectPin, onPlace: placeMarker });
-  disposeMap = () => map.destroy();
-  const observer = new MutationObserver(() => { if (!alive(root, userId)) { map.destroy(); observer.disconnect(); } });
+  const feedback = createScanFeedback($("[data-scan-feedback]"), {
+    onSelect(id) { activePhotoId = id; placement = null; update(); $("[data-photo-map]").scrollIntoView({ behavior: "smooth", block: "center" }); },
+    onRetry(id, options) { session.retryPhoto(id, options); feedback.show(); },
+    onChoose() { $("[data-file-library]").click(); },
+    onPause() { session.pause(); },
+    onResume() { session.resume(); },
+    onReview() { $("[data-visual-workspace]").scrollIntoView({ behavior: "smooth", block: "start" }); },
+  });
+  const cleanup = () => { map.destroy(); feedback.destroy(); };
+  disposeMap = cleanup;
+  const observer = new MutationObserver(() => { if (!alive(root, userId)) { cleanup(); observer.disconnect(); } });
   observer.observe(document.getElementById("app"), { childList: true, subtree: true });
 
   function selectPin(pin) {
@@ -121,6 +132,7 @@ export async function renderScan(root) {
     const draft = session.draft, stats = sessionSummary(draft), duplicates = duplicateWarnings(draft.items, state.tapes);
     if (!draft.photos.some((photo) => photo.id === activePhotoId)) { activePhotoId = draft.photos[0]?.id; placement = null; pendingMarker = null; }
     const photo = activePhoto(), running = !draft.paused && stats.pending > 0;
+    feedback.update(session);
     $("[data-batch]").hidden = !stats.photos; $("[data-visual-workspace]").hidden = !stats.photos && !draft.items.length;
     $("[data-dropzone]").classList.toggle("has-photos", stats.photos > 0);
     $("[data-upload-copy]").hidden = $("[data-upload-tip]").hidden = stats.photos > 0;
@@ -130,7 +142,7 @@ export async function renderScan(root) {
     $("[data-mode]").value = draft.mode; $("[data-mode]").disabled = session.saving || running;
     $("[data-queue-status]").textContent = stats.pending ? `${stats.completed} of ${stats.photos} photos read${draft.paused ? " · paused" : ""}` : stats.errors ? `${stats.errors} photo${stats.errors === 1 ? "" : "s"} couldn’t be read` : `${stats.completed} photo${stats.completed === 1 ? "" : "s"} read`;
     const run = $("[data-run]"); run.disabled = (!stats.pending && !stats.errors) || session.saving;
-    run.textContent = running ? "Pause reading" : stats.pending ? `${stats.completed ? "Resume reading" : `Read ${stats.pending} photo${stats.pending === 1 ? "" : "s"}`}` : stats.errors ? "Retry failed photos" : "All photos read";
+    run.textContent = running ? "Pause updates" : stats.pending ? `${stats.completed || draft.photos.some((entry) => entry.jobId) ? "Resume reading" : `Read ${stats.pending} photo${stats.pending === 1 ? "" : "s"}`}` : stats.errors ? "Retry failed photos" : "All photos read";
     for (const [id, node] of photoNodes) if (!draft.photos.some((entry) => entry.id === id)) { node.remove(); photoNodes.delete(id); }
     draft.photos.forEach((entry, index) => {
       let node = photoNodes.get(entry.id);
@@ -139,13 +151,16 @@ export async function renderScan(root) {
       node.querySelector("span").textContent = `Photo ${index + 1}`;
       const photoNeedsCheck = (entry.needsPhotoReview || photoCountMismatch(entry, draft.items)) && !entry.reviewed;
       node.classList.toggle("needs-check", photoNeedsCheck);
+      node.classList.toggle("is-reading", entry.status === "processing");
+      node.classList.toggle("has-error", entry.status === "error");
       node.querySelector("small").textContent = entry.status === "complete" ? photoNeedsCheck ? "Check photo" : `${draft.items.filter((item) => item.photoId === entry.id).length} tapes` : entry.status === "processing" ? "Reading…" : entry.status === "error" ? "Retry" : entry.status === "preparing" ? "Preparing…" : "Ready";
       node.classList.toggle("active", entry.id === activePhotoId); node.setAttribute("aria-pressed", String(entry.id === activePhotoId)); node.setAttribute("aria-label", `Photo ${index + 1}: ${node.querySelector("small").textContent}`); node.disabled = !entry.image;
     });
     const items = photoItems(photo), pins = tapePins(items), unplaced = items.length - pins.length;
     $("[data-photo-heading]").textContent = photo ? `Photo ${draft.photos.indexOf(photo) + 1}` : "No source photo";
     const counted = photo?.verification?.countedCount;
-    $("[data-photo-coverage]").textContent = photo?.status === "complete" ? `${pins.length} dots · ${items.length} titles${Number.isInteger(counted) ? ` · ${counted} counted` : ""}` : photo?.status === "processing" ? photo.stage === "verifying" ? "Taking a closer look…" : "Finding your tapes…" : "Your titles will be marked here.";
+    $("[data-photo-coverage]").textContent = photo?.status === "complete" ? `${pins.length} dots · ${items.length} titles${Number.isInteger(counted) ? ` · ${counted} counted` : ""}` : photo?.status === "processing" ? photo.stage === "verifying" ? "Taking a closer look…" : "Finding your tapes…" : photo?.status === "error" ? "Scan didn’t finish. See the reason above." : "Your titles will be marked here.";
+    $(".scan-photo-panel").classList.toggle("is-processing", photo?.status === "processing");
     map.update({ photo, pins: compareCount ? countPins(photo) : pins, selectedId, placing: placement });
     $("[data-marker-legend]").textContent = compareCount ? "Independent count positions" : "A dot links to a title";
     $("[data-compare-count]").hidden = !countPins(photo).length; $("[data-compare-count]").textContent = compareCount ? "Show title dots" : "Compare count";
@@ -157,8 +172,8 @@ export async function renderScan(root) {
     $("[data-placement-note]").hidden = !placement; $("[data-placement-text]").textContent = placement?.id === "new" ? "Tap the missed tape, then give it a title." : "Tap the matching tape to move its dot. You can enlarge the photo.";
     $("[data-add-dot]").disabled = $("[data-expand]").disabled = !photo?.image || session.saving;
     $("[data-remove-photo]").disabled = session.saving || !photo;
-    $("[data-retry-photo]").hidden = photo?.status !== "error";
-    const notes = [photo?.error, photo?.verificationError, photo?.notes].filter(Boolean);
+    $("[data-retry-photo]").hidden = photo?.status !== "error" || !canRetryPhoto(photo);
+    const notes = [photo?.notes].filter(Boolean);
     $("[data-photo-notes]").hidden = !notes.length; $("[data-notes]").textContent = notes.join(" ");
     $("[data-result-count]").textContent = draft.items.length; $("[data-count-review]").textContent = stats.needsReview; $("[data-count-duplicates]").textContent = duplicates.size;
     root.querySelectorAll("[data-filter]").forEach((button) => { button.classList.toggle("active", button.dataset.filter === filter); button.setAttribute("aria-pressed", String(button.dataset.filter === filter)); });
@@ -196,6 +211,8 @@ export async function renderScan(root) {
       if (evidence.innerHTML !== html) evidence.innerHTML = html;
     });
     $("[data-empty]").hidden = draft.items.length > 0; $("[data-review-notice]").hidden = !draft.items.length || matching.length > 0; $("[data-review-notice]").textContent = "No titles match this view.";
+    $("[data-empty-title]").textContent = running ? "Reading your photos…" : stats.errors ? "No results to review yet." : stats.completed ? "No tapes were identified." : "Ready when you are.";
+    $("[data-empty-description]").textContent = running ? "Titles will appear here when a photo is ready." : stats.errors ? "See the scan error above for the reason and next step." : stats.completed ? "Try a closer shelf photo, or add a title manually." : "Read your photos to see the titles and their dots.";
     $("[data-more]").hidden = matching.length <= shown.length; $("[data-more]").textContent = `Show more titles (${shown.length} of ${matching.length})`;
     const pricing = session.pricingSummary();
     $("[data-prices]").textContent = pricing.completed > 0 && pricing.completed === pricing.eligible ? "Refresh prices" : pricing.paused ? "Resume price checks" : "Check live prices";
@@ -235,15 +252,15 @@ export async function renderScan(root) {
     const stats = sessionSummary(session.draft);
     if (!session.draft.paused && stats.pending) session.pause();
     else {
-      const errors = session.draft.photos.filter((photo) => photo.status === "error" && photo.image && (!photo.retryAfter || photo.retryAfter <= Date.now()));
-      if (!stats.pending && !errors.length && stats.errors) { toast("Choose another photo, or wait a moment before retrying.", { error: true }); return; }
-      errors.forEach((photo) => { photo.status = "queued"; photo.error = ""; }); session.resume();
+      const result = session.retryFailedPhotos();
+      if (!stats.pending && !result.retried && stats.errors) { feedback.show(); toast(result.waiting ? "The scanner needs a short pause. The retry countdown is shown below." : "See the reason below and choose the next step for this photo.", { error: true, duration: 4500 }); return; }
+      session.resume(); feedback.show();
     }
   };
   $("[data-expand]").onclick = showPhoto; $("[data-compare-count]").onclick = () => { compareCount = !compareCount; placement = null; update(); };
   $("[data-photo-confirm]").onchange = (event) => session.confirmPhoto(activePhotoId, event.target.checked);
   $("[data-add-dot]").onclick = () => beginPlacement(); $("[data-cancel-place]").onclick = () => { placement = null; update(); };
-  $("[data-remove-photo]").onclick = () => session.removePhoto(activePhotoId); $("[data-retry-photo]").onclick = () => { const photo = activePhoto(); if (photo.retryAfter > Date.now()) toast("Wait a moment, then retry."); else session.retryPhoto(photo.id); };
+  $("[data-remove-photo]").onclick = () => session.removePhoto(activePhotoId); $("[data-retry-photo]").onclick = () => { session.retryPhoto(activePhotoId); feedback.show(); };
   $("[data-manual-toggle]").onclick = () => { const form = $("[data-manual-form]"); form.hidden = !form.hidden; pendingMarker = null; placement = null; if (!form.hidden) { $("[data-manual-photo]").value = activePhotoId || ""; $("[data-manual-title]").focus(); } update(); };
   $("[data-manual-form]").onsubmit = (event) => {
     event.preventDefault(); const photoId = $("[data-manual-photo]").value;
@@ -269,7 +286,7 @@ export async function renderScan(root) {
   $("[data-library]").onclick = () => { session.pause(); go("library", null, { replace: true }); };
   $("[data-new-batch]").onclick = () => {
     if (session.draft.items.some((item) => !isItemSaved(item)) || session.draft.photos.some((photo) => photo.status !== "complete")) {
-      const { body, close } = openSheet({ title: "Start a fresh batch?", content: `<p class="hint">Saved finds stay in your account. This removes the current photos and unsaved titles from this device.</p><div class="stack mt-16"><button class="btn" data-confirm-reset>Start fresh</button><button class="btn gray" data-cancel-reset>Keep this draft</button></div>` });
+      const { body, close } = openSheet({ title: "Start a fresh batch?", content: `<p class="hint">Saved finds stay in your account. This removes the current photos and unsaved titles from this device. Scans already submitted may finish in the background.</p><div class="stack mt-16"><button class="btn" data-confirm-reset>Start fresh</button><button class="btn gray" data-cancel-reset>Keep this draft</button></div>` });
       body.querySelector("[data-confirm-reset]").onclick = () => { close(); placement = null; pendingMarker = null; session.clear(); }; body.querySelector("[data-cancel-reset]").onclick = close;
     } else session.clear();
   };

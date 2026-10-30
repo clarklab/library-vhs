@@ -3426,3 +3426,71 @@ input[type="checkbox"] {
 .scan-price-cell { flex-shrink: 0; max-width: 110px; text-align: right; }
 .scan-price-cell > span { display: block; font-size: 9px; line-height: 1.4; color: var(--label-secondary); }
 @media (max-width: 700px) { .scan-price-cell { max-width: 84px; } }
+
+/* Scan feedback stays visible while the background worker reads a shelf. */
+.scan-feedback { margin: 4px 0 24px; padding: 24px; border: 1px solid #cdd8bb; border-radius: 12px; background: #edf1df; scroll-margin-top: 18px; }
+.scan-feedback-header { display: flex; align-items: flex-start; gap: 16px; }
+.scan-feedback-symbol { display: grid; place-items: center; flex-shrink: 0; width: 46px; height: 46px; border-radius: 50%; background: #dce6c5; color: #425834; }
+.scan-feedback-symbol i { display: block; width: 21px; height: 21px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; }
+.scan-feedback[data-state=busy] .scan-feedback-symbol i { animation: spin 1.1s linear infinite; }
+.scan-feedback:not([data-state=busy]) .scan-feedback-symbol i { border: 0; width: auto; height: auto; }
+.scan-feedback[data-state=complete] .scan-feedback-symbol i::after { content: "✓"; font: 600 24px/1 var(--font-sans); }
+.scan-feedback[data-state=paused] .scan-feedback-symbol i::after { content: "Ⅱ"; font: 600 22px/1 var(--font-sans); }
+.scan-feedback[data-state=error] { background: #fff0e9; border-color: #e7c5b4; }
+.scan-feedback[data-state=error] .scan-feedback-symbol { background: #f7d8c9; color: #923f22; }
+.scan-feedback[data-state=error] .scan-feedback-symbol i::after { content: "!"; font: 600 25px/1 var(--font-sans); }
+.scan-feedback-copy { flex: 1; min-width: 0; }
+.scan-feedback-copy .eyebrow { margin: 0 0 6px; font-size: 10px; }
+.scan-feedback-copy h2 { font-size: 25px; letter-spacing: -.04em; }
+.scan-feedback-copy > p:last-child { margin-top: 8px; color: var(--label-secondary); font-size: 13px; line-height: 1.6; max-width: 670px; }
+.scan-feedback-header > .btn { flex-shrink: 0; min-height: 42px; font-size: 12px; }
+.scan-feedback-track { height: 3px; background: #d6dfc6; overflow: hidden; margin-top: 22px; border-radius: 3px; }
+.scan-feedback-track i { display: block; height: 100%; background: #687b47; }
+.scan-feedback[data-state=busy] .scan-feedback-track i { width: 25%; animation: scan-working-track 2.8s ease-in-out infinite; }
+.scan-feedback[data-state=error] .scan-feedback-track { display: none; }
+.scan-feedback[data-state=paused] .scan-feedback-track i { width: 0; }
+.scan-feedback-total { font: 11px/1.5 var(--font-mono); color: var(--label-secondary); margin-top: 12px; }
+.scan-active-photos { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.scan-active-photos:empty { display: none; }
+.scan-active-photos > li { display: flex; gap: 10px; align-items: center; }
+.scan-active-photos strong { font-size: 13px; font-weight: 600; margin-right: 10px; }
+.scan-active-photos li > div > span { font-size: 12px; color: var(--label-secondary); }
+.scan-active-photos time { margin-left: auto; font: 11px var(--font-mono); white-space: nowrap; color: #50613f; }
+.scan-working-dot { width: 8px; height: 8px; background: #ee4c97; border-radius: 50%; flex-shrink: 0; }
+.scan-active-photos .scan-slow-note { font-size: 12px; line-height: 1.6; color: #50613f; }
+.scan-failure-list { display: grid; gap: 12px; }
+.scan-failure { display: flex; gap: 24px; justify-content: space-between; padding: 20px; margin-top: 16px; background: #fffaf6; border: 1px solid #e7c5b4; border-radius: 8px; }
+.scan-failure > div:first-child { min-width: 0; }
+.scan-failure-photo { padding: 0; border: 0; background: none; color: #914326; font: 600 12px var(--font-sans); text-decoration: underline; text-underline-offset: 3px; min-height: 28px; }
+.scan-failure h3 { font-size: 16px; letter-spacing: -.02em; line-height: 1.45; margin: 5px 0; }
+.scan-failure p, .scan-verification-warning p { font-size: 12px; line-height: 1.6; color: var(--label-secondary); }
+.scan-failure details { font-size: 11px; color: var(--label-secondary); margin-top: 8px; }
+.scan-failure summary { cursor: pointer; padding: 6px 0; }
+.scan-failure details p { overflow-wrap: anywhere; font-size: 11px; }
+.scan-failure-actions { display: flex; flex-direction: column; gap: 8px; justify-content: center; flex-shrink: 0; }
+.scan-failure-actions .btn { min-height: 42px; font-size: 12px; }
+.scan-verification-warning { margin-top: 14px; padding: 16px; background: #fff9e8; border: 1px solid #e7d7ae; border-radius: 8px; }
+.scan-verification-warning strong { display: block; font-size: 13px; margin-bottom: 5px; }
+.scan-photo-tab.is-reading { border-color: #9daa79; }
+.scan-photo-tab.is-reading small::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #ee4c97; }
+.scan-photo-tab.has-error small { color: #9b3f20; }
+.scan-photo-panel.is-processing .photo-map-frame { position: relative; }
+.scan-photo-panel.is-processing .photo-map-frame::after { content: ""; position: absolute; top: 0; bottom: 0; width: 25%; background: linear-gradient(90deg, transparent, #f68bb140, transparent); pointer-events: none; animation: scan-working-track 4s ease-in-out infinite; }
+@keyframes scan-working-track { 0% { transform: translateX(-100%); } 100% { transform: translateX(500%); } }
+@media (max-width: 700px) {
+ .scan-feedback { padding: 18px; }
+ .scan-feedback-header { gap: 12px; flex-wrap: wrap; }
+ .scan-feedback-symbol { width: 36px; height: 36px; }
+ .scan-feedback-copy { flex-basis: calc(100% - 48px); }
+ .scan-feedback-copy h2 { font-size: 23px; }
+ .scan-feedback-header > .btn { margin-left: 48px; min-height: 44px; }
+ .scan-active-photos li > div > span { display: block; margin-top: 3px; }
+ .scan-failure { flex-direction: column; gap: 12px; padding: 16px; }
+ .scan-failure-actions { flex-direction: row; flex-wrap: wrap; }
+ .scan-failure-actions .btn { min-height: 44px; flex: 1; }
+ .scan-failure-photo { min-height: 36px; }
+}
+@media (prefers-reduced-motion: reduce) {
+ .scan-feedback[data-state=busy] .scan-feedback-symbol i, .scan-feedback[data-state=busy] .scan-feedback-track i, .scan-photo-panel.is-processing .photo-map-frame::after { animation: none; }
+ .scan-feedback[data-state=busy] .scan-feedback-track i { width: 100%; opacity: .45; }
+}

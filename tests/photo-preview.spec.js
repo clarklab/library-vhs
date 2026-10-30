@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { scanJobFixture } from "./helpers/scan-jobs.js";
 
 const shelf = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1800"><rect width="1200" height="1800" fill="#d8d6c2"/>${Array.from({ length: 12 }, (_, index) => `<rect x="90" y="${80 + index * 135}" width="1020" height="115" rx="8" fill="${index % 2 ? "#ece8d7" : "#283730"}"/><text x="130" y="${155 + index * 135}" font-size="48" font-family="sans-serif" fill="${index % 2 ? "#283730" : "#ece8d7"}">VHS SHELF · TITLE ${String(index + 1).padStart(2, "0")}</text>`).join("")}</svg>`);
 
@@ -11,12 +12,14 @@ test("mobile source-photo review rotates, zooms, pans and fits without altering 
     localStorage.setItem("vhsvault.token", "photo-preview-test");
     localStorage.setItem("vhsvault.installDismissedAt", String(Date.now()));
   });
+  const jobs = scanJobFixture();
   await page.route("**/api/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let response = {};
     if (path === "/api/auth/me") response = { user: { id: "photo-preview-user", email: "preview@example.com" } };
     if (path === "/api/tapes") response = { tapes: [] };
-    if (path === "/api/scan") {
+    if (path.startsWith("/api/scan-jobs/")) return jobs.poll(route);
+    if (path === "/api/scan-jobs") {
       uploadedImage = route.request().postDataJSON().image;
       response = {
         tapes: [{ title: "Test tape", format: "VHS", confidence: "high", needsReview: false, sourceIndex: 1 }],
@@ -24,6 +27,7 @@ test("mobile source-photo review rotates, zooms, pans and fits without altering 
         needsVerification: false, warnings: [],
       };
     }
+    if (path === "/api/scan-jobs") return jobs.create(route, response);
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(response) });
   });
   await page.goto("/");

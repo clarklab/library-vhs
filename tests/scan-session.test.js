@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ScanSession, duplicateWarnings, requiresReview, requiresPhotoReview, photoCountMismatch, sessionSummary, tapePayload } from "../public/js/scan-session.js";
+import { ScanSession, duplicateWarnings, requiresReview, requiresPhotoReview, photoCountMismatch, sessionSummary, tapePayload, canRetryPhoto, canRetryAfterServiceUpdate } from "../public/js/scan-session.js";
 
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const tick = () => new Promise((resolve) => setImmediate(resolve));
@@ -10,7 +10,7 @@ const response = (title = "Alien", patch = {}) => ({ tapes: [tape(title)], verif
 function fixture(client = {}, saved) {
   let counter = 0;
   const writes = [];
-  const session = new ScanSession("user-a", saved, { client, id: () => `id-${++counter}`, storage: { put: async (draft) => writes.push(structuredClone(draft)) }, resize: async () => "data:image/jpeg;base64,test" });
+  const session = new ScanSession("user-a", saved, { transport: "direct", client, id: () => `id-${++counter}`, storage: { put: async (draft) => writes.push(structuredClone(draft)) }, resize: async () => "data:image/jpeg;base64,test" });
   return { session, writes };
 }
 function photos(session, n) { session.draft.photos = Array.from({ length: n }, (_, i) => ({ id: `p-${i}`, name: `${i}.jpg`, status: "queued", image: "data:image/jpeg;base64,test" })); }
@@ -233,7 +233,7 @@ test("device storage failure blocks save before a request can commit without dur
 
 test("session requests carry the account token pinned when the draft opens", async () => {
   const opts = [];
-  const session = new ScanSession("user-a", null, { expectedToken: "original-account", storage: { put: async () => {} }, id: () => "id", client: {
+  const session = new ScanSession("user-a", null, { transport: "direct", expectedToken: "original-account", storage: { put: async () => {} }, id: () => "id", client: {
     scanPhoto: async (_image, options) => { opts.push(options); return response(); },
     enrich: async (_items, options) => { opts.push(options); return { results: [] }; },
     createTapes: async (items, options) => { opts.push(options); return { tapes: items.map((i) => ({ ...i, id: "saved" })) }; },
@@ -437,4 +437,89 @@ test("a pricing rate limit stops the remaining queue for an explicit retry", asy
   session.draft.items = Array.from({length:8},(_,index) => tape(`Tape ${index}`)); session.priceAll();
   await until(() => session.pricingControllers.size === 0);
   assert.equal(calls,2); assert.equal(session.pricingPaused,true); assert.equal(session.pricingSummary().errors,1); assert.equal(session.pricingSummary().paused,7); session.dispose();
+});
+
+test("photo failures retain actionable diagnostics and enforce retry deadlines without an automatic loop", async () => {
+  let now = 1000, calls = 0;
+  const { session, writes } = fixture({ scanPhoto: async () => {
+    calls++;
+    throw Object.assign(new Error("The server timed out"), { status: 504, code: "HTTP_504", retryable: true, retryAfterMs: 3000, requestId: "request-123", details: "Function timeout" });
+  } });
+  session.now = () => now;
+  photos(session, 1); session.resume(); await until(() => session.controllers.size === 0);
+  const photo = session.draft.photos[0];
+  assert.equal(photo.stage, "error"); assert.equal(photo.errorStage, "reading");
+  assert.equal(photo.errorCode, "HTTP_504"); assert.equal(photo.errorStatus, 504);
+  assert.equal(photo.requestId, "request-123"); assert.equal(photo.errorDetails, "Function timeout");
+  assert.equal(photo.retryAfterMs, 3000); assert.equal(photo.retryAfter, 4000);
+  assert.equal(photo.startedAt, 1000); assert.equal(photo.finishedAt, 1000); assert.equal(photo.attemptCount, 1);
+  assert.equal(writes.at(-1).photos[0].errorCode, "HTTP_504");
+  assert.equal(session.retryPhoto(photo.id), false);
+  assert.deepEqual(session.retryFailedPhotos(), { retried: 0, waiting: 1, blocked: 0 });
+  assert.equal(calls, 1);
+  now = 4000; assert.equal(canRetryPhoto(photo, now), true); assert.equal(session.retryPhoto(photo.id), true);
+  await until(() => session.controllers.size === 0);
+  assert.equal(calls, 2); assert.equal(photo.attemptCount, 2); session.dispose();
+});
+
+test("permanent image failures require a replacement while repaired services allow an explicit retry", async () => {
+  let calls = 0;
+  const { session } = fixture({ scanPhoto: async () => { calls++; return response(); } });
+  photos(session, 2);
+  const [image, service] = session.draft.photos;
+  Object.assign(image, { status: "error", retryable: false, errorCode: "AI_TRUNCATED", errorStatus: 422 });
+  Object.assign(service, { status: "error", retryable: false, errorCode: "AI_CONFIGURATION", errorStatus: 502 });
+  assert.equal(canRetryAfterServiceUpdate(image), false); assert.equal(canRetryAfterServiceUpdate(service), true);
+  assert.deepEqual(session.retryFailedPhotos(), { retried: 0, waiting: 0, blocked: 2 });
+  assert.equal(session.retryPhoto(image.id, { afterServiceUpdate: true }), false);
+  assert.equal(session.retryPhoto(service.id), false);
+  assert.equal(session.retryPhoto(service.id, { afterServiceUpdate: true }), true);
+  await until(() => session.controllers.size === 0);
+  assert.equal(calls, 1); assert.equal(image.status, "error"); assert.equal(service.status, "complete"); session.dispose();
+});
+
+test("service failures pause queued photos instead of repeating doomed requests", async () => {
+  let calls = 0;
+  const { session } = fixture({ scanPhoto: async (_image, { signal }) => {
+    calls++;
+    if (calls === 1) throw Object.assign(new Error("Gateway configuration needs attention"), { status: 503, code: "AI_UNAVAILABLE", retryable: false });
+    return new Promise((_resolve, reject) => signal.addEventListener("abort", () => reject(new DOMException("paused", "AbortError"))));
+  } });
+  photos(session, 5); session.resume(); await until(() => session.controllers.size === 0);
+  assert.equal(calls, 2); assert.equal(session.draft.paused, true); assert.match(session.draft.pauseReason, /configuration/);
+  assert.equal(sessionSummary(session.draft).blockedErrors, 1); assert.equal(sessionSummary(session.draft).queued, 4);
+  assert.equal(session.draft.photos[1].stage, "paused"); session.dispose();
+});
+
+test("reading and verification expose stable stage timing and retained verification failure diagnostics", async () => {
+  const first = deferred(), second = deferred(); let calls = 0, now = 1000;
+  const { session } = fixture({ scanPhoto: () => ++calls === 1 ? first.promise : second.promise });
+  session.now = () => now; photos(session, 1); session.resume();
+  const photo = session.draft.photos[0]; assert.equal(photo.stage, "reading"); assert.equal(photo.stageStartedAt, 1000);
+  now = 2000; first.resolve(response("Retained title", { needsVerification: true })); await until(() => calls === 2);
+  assert.equal(photo.stage, "verifying"); assert.equal(photo.startedAt, 1000); assert.equal(photo.stageStartedAt, 2000);
+  now = 3000; second.reject(Object.assign(new Error("Verifier timed out"), { status: 504, code: "AI_TIMEOUT", retryable: true, requestId: "verify-123" }));
+  await until(() => session.controllers.size === 0);
+  assert.equal(photo.stage, "complete"); assert.equal(photo.finishedAt, 3000);
+  assert.equal(photo.verificationFailure.errorCode, "AI_TIMEOUT"); assert.equal(photo.verificationFailure.requestId, "verify-123");
+  assert.match(photo.verificationError, /Verifier timed out.*first reading is kept/); assert.equal(session.draft.items[0].title, "Retained title"); session.dispose();
+});
+
+test("unreadable API results become visible failures instead of successful empty scans", async () => {
+  const { session } = fixture({ scanPhoto: async () => ({ message: "Missing scan data" }) });
+  photos(session, 1); session.resume(); await until(() => session.controllers.size === 0);
+  assert.equal(session.draft.photos[0].status, "error"); assert.equal(session.draft.photos[0].errorCode, "INVALID_SCAN_RESPONSE");
+  assert.equal(sessionSummary(session.draft).completed, 0); assert.equal(session.draft.items.length, 0); session.dispose();
+});
+
+test("image preparation failures stay visible and do not strand later files", async () => {
+  let now = 1000, calls = 0;
+  const { session } = fixture(); session.now = () => now;
+  session.resize = async () => { if (++calls === 1) throw new Error("Unsupported photo format"); now = 2000; return "prepared-photo"; };
+  session.addFiles([{ name: "broken.heic" }, { name: "good.jpg" }]); await session.prepareChain;
+  const [failed, queued] = session.draft.photos;
+  assert.equal(session.preparing, 0); assert.equal(failed.stage, "error"); assert.equal(failed.errorStage, "preparing");
+  assert.equal(failed.errorCode, "IMAGE_PREPARATION_FAILED"); assert.equal(failed.retryable, false);
+  assert.equal(failed.preparationStartedAt, 1000); assert.equal(queued.stage, "queued"); assert.equal(queued.queuedAt, 2000);
+  assert.equal(sessionSummary(session.draft).blockedErrors, 1); assert.equal(sessionSummary(session.draft).queued, 1); session.dispose();
 });

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { scanJobFixture } from "./helpers/scan-jobs.js";
 const titles = [
   "Jurassic Park",
   "Jaws",
@@ -37,6 +38,7 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
   });
   let tapes = empty ? [] : structuredClone(library);
   let scout = null;
+  const jobs = scanJobFixture();
   let scans = 0;
   let creates = 0;
   await page.route("**/api/**", async (route) => {
@@ -92,11 +94,12 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
         };
       return send({ list: scout });
     }
-    if (path === "/api/scan") {
+    if (path.startsWith("/api/scan-jobs/")) return jobs.poll(route);
+    if (path === "/api/scan-jobs") {
       scans++;
       await new Promise((r) => setTimeout(r, 80));
       if (itemsPerPhoto > 2) {
-        return send({
+        return jobs.create(route, {
           count: itemsPerPhoto,
           reportedCount: itemsPerPhoto,
           sourceId: body.sourceId,
@@ -119,7 +122,7 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
           },
         });
       }
-      return send({
+      return jobs.create(route, {
         count: 2,
         reportedCount: 2,
         sourceId: body.sourceId,
@@ -143,13 +146,13 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
         ],
         notes: "Two visible VHS boxes.",
         warnings: [],
-        needsVerification: body.mode !== "thorough",
+        needsVerification: false,
         verification: {
           status: "matched",
           countedCount: 2,
           listedCount: 2,
           uncertainCount: 1,
-          stage: body.mode === "thorough" ? "reviewed" : "initial",
+          stage: "reviewed",
         },
       });
     }
@@ -311,7 +314,7 @@ test("batch review persists edits, gates uncertainty, saves scouts separately an
     "saved to your scout list",
   );
   expect(app.getCreates()).toBe(0);
-  expect(app.getScans()).toBe(4);
+  expect(app.getScans()).toBe(2);
   expect(app.getScout().items).toHaveLength(4);
   await page.locator(".sidebar [data-tab=scouts]").click();
   await page.locator("[data-open]").click();
