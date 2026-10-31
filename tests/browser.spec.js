@@ -362,6 +362,7 @@ test("mobile layouts stay within viewport and permit camera/scout selection", as
 test("auth forms are labeled and responsive", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await page.getByRole("button", { name: "I already have an account" }).click();
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click();

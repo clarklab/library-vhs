@@ -14,7 +14,7 @@ import { renderScouts } from "./scouts.js";
 import { renderStats, renderSales, renderSettings } from "./stats.js";
 import { pauseScanSession, disposeScanSession } from "./scan-session.js";
 import { brandMark } from "./brand.js";
-import { renderAuth as renderAuthView } from "./auth-view.js";
+import { renderAuth as renderAuthView, openSaveVault as openSaveVaultSheet } from "./auth-view.js";
 import { renderBackup, disposeBackup } from "./backup.js";
 import { initInstall, maybeOfferInstall } from "./install.js";
 
@@ -25,6 +25,7 @@ export const state = {
   loadError: "",
   view: "auth",
   viewArg: null,
+  authMode: "welcome",
   library: { mode: "grid", query: "", filter: "all", sort: "added" },
 };
 
@@ -58,7 +59,7 @@ window.addEventListener("popstate", (event) => {
   const fromView = state.view;
   const fromArg = state.viewArg;
   if (state.user) {
-    state.view = entry?.view && entry.view !== "auth" ? entry.view : "library";
+    state.view = entry?.view && entry.view !== "auth" && (entry.view !== "signin" || state.user.guest) ? entry.view : "library";
     state.viewArg = entry?.arg ?? null;
   } else {
     state.view = "auth";
@@ -132,7 +133,14 @@ export async function refreshTapes() {
   }
 }
 
+const GUEST_NUDGE_KEY = "vhsvault.guestSaveNudge";
 export function upsertTapes(tapes) {
+  if (state.user?.guest && tapes.length && !state.tapes.length) {
+    // One friendly reminder after a guest's first tapes land; never a gate.
+    let nudged = true;
+    try { nudged = Boolean(localStorage.getItem(GUEST_NUDGE_KEY)); localStorage.setItem(GUEST_NUDGE_KEY, "1"); } catch { /* storage unavailable */ }
+    if (!nudged) setTimeout(() => toast("Nice haul! Save your vault from the header whenever you’re ready.", { duration: 5200 }), 900);
+  }
   for (const tape of tapes) {
     const idx = state.tapes.findIndex((t) => t.id === tape.id);
     if (idx >= 0) state.tapes[idx] = tape;
@@ -152,6 +160,10 @@ export function render() {
 
   if (!state.user) {
     renderAuth(shell);
+    return;
+  }
+  if (state.view === "signin" && state.user.guest) {
+    renderGuestSignIn(shell);
     return;
   }
 
@@ -214,7 +226,9 @@ function sidebar(active) {
     <div class="sidebar-label">Workspace</div>
     <nav aria-label="Main navigation">${NAV_ITEMS.map(([view, icon, label]) => `<button type="button" class="side-link${active === view ? " active" : ""}" data-tab="${view}" ${active === view ? 'aria-current="page"' : ""}>${icons[icon]}<span>${label}</span>${view === "library" ? `<span class="nav-count">${state.tapes.length}</span>` : ""}</button>`).join("")}</nav>
     <div class="sidebar-note"><span class="mono">GOOD TAPES. GOOD COMPANY.</span><p>A little analog.<br>A lot more organized.</p><div class="color-stripes" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
-    <div class="sidebar-bottom"><button type="button" class="side-link${["settings", "backup"].includes(active) ? " active" : ""}" data-tab="settings">${icons.settings}<span>Account &amp; backup</span></button><div class="account"><span class="account-avatar">${esc((state.user?.email || "V")[0].toUpperCase())}</span><div><strong>${esc(state.user?.displayName || "Your personal vault")}</strong><p>${esc(state.user?.email || "")}</p></div></div></div>
+    <div class="sidebar-bottom"><button type="button" class="side-link${["settings", "backup"].includes(active) ? " active" : ""}" data-tab="settings">${icons.settings}<span>Account &amp; backup</span></button>${state.user?.guest
+      ? `<div class="account guest-account"><span class="account-avatar">${icons.tape}</span><div><strong>${esc(state.user.displayName || "Guest vault")}</strong><p>Not saved to an account</p></div></div><button type="button" class="btn save-vault-side" data-save-vault>Save your vault</button>`
+      : `<div class="account"><span class="account-avatar">${esc((state.user?.email || "V")[0].toUpperCase())}</span><div><strong>${esc(state.user?.displayName || "Your personal vault")}</strong><p>${esc(state.user?.email || "")}</p></div></div>`}</div>
   </aside>`;
 }
 function workspaceHeader() {
@@ -231,7 +245,7 @@ function workspaceHeader() {
     bulk: "Paste a list",
     csv: "Import inventory",
   };
-  return `<header class="workspace-header"><div class="breadcrumb"><span>Personal vault</span><span aria-hidden="true">/</span><strong>${labels[state.view] || "Collection"}</strong></div><div class="header-right"><span class="header-note">Made for the love of tape.</span><button type="button" class="icon-button" data-tab="settings" aria-label="Settings">${icons.settings}</button><button type="button" class="icon-button mobile-menu-toggle" data-menu aria-label="Open navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div></header>`;
+  return `<header class="workspace-header"><div class="breadcrumb"><span>Personal vault</span><span aria-hidden="true">/</span><strong>${labels[state.view] || "Collection"}</strong></div><div class="header-right">${state.user?.guest ? `<button type="button" class="save-vault-chip" data-save-vault aria-label="Save your vault">${icons.check}<span>Save your vault</span></button>` : `<span class="header-note">Made for the love of tape.</span>`}<button type="button" class="icon-button" data-tab="settings" aria-label="Settings">${icons.settings}</button><button type="button" class="icon-button mobile-menu-toggle" data-menu aria-label="Open navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div></header>`;
 }
 function tabBar(active) {
   if (active === "backup") active = "settings";
@@ -251,6 +265,7 @@ function wireNavigation(root) {
       open ? "Close navigation" : "Open navigation",
     );
   });
+  root.querySelectorAll(".sidebar [data-save-vault], .workspace-header [data-save-vault]").forEach((button) => button.addEventListener("click", openSaveVault));
   root.querySelector(".brand")?.addEventListener("click", (event) => {
     event.preventDefault();
     go("library");
@@ -271,6 +286,36 @@ function renderAuth(root) {
   renderAuthView(root, async (result) => {
     adoptAccountSession(result);
     await loadAndEnter({ offerInstall: !result.recoveryCode });
+  }, {
+    mode: state.authMode,
+    async onStartGuest() {
+      const result = await api.startGuest({ expectedToken: getToken() });
+      adoptAccountSession(result);
+      await loadAndEnter({ offerInstall: false });
+      toast("Your vault is open. Start with a shelf photo!", { duration: 3600 });
+    },
+  });
+}
+
+/** A guest chose to sign in to an existing account instead of saving this vault. */
+function renderGuestSignIn(root) {
+  renderAuthView(root, async (result) => {
+    adoptAccountSession(result);
+    await loadAndEnter({ offerInstall: !result.recoveryCode });
+  }, { mode: "login", guest: { tapeCount: state.tapes.length }, onBack: () => back() });
+}
+
+export function openSaveVault() {
+  if (!state.user?.guest) return;
+  const userId = state.user.id;
+  openSaveVaultSheet({
+    tapeCount: state.tapes.length,
+    async onSaved(result) {
+      if (state.user?.id !== userId) return;
+      adoptAccountSession(result);
+      render();
+      toast("Your vault is saved to your account.");
+    },
   });
 }
 
@@ -304,6 +349,7 @@ window.addEventListener("vhs:signed-out", () => {
   state.loaded = false;
   state.loadError = "";
   state.view = "auth";
+  state.authMode = "login";
   render();
   toast("Signed out.", {});
 });
@@ -340,6 +386,7 @@ export function clearAccountSession() {
   state.tapes = [];
   state.loaded = false;
   state.loadError = "";
+  state.authMode = "login";
   go("auth", null, { replace: true });
 }
 
@@ -360,7 +407,7 @@ async function boot() {
     return;
   } catch (err) {
     if (getToken() !== expectedToken && getToken() !== null) return;
-    if (err.status === 401) setToken(null);
+    if (err.status === 401) { setToken(null); if (hadSession) state.authMode = "login"; }
     else if (hadSession) { renderOffline(err); return; }
   }
   state.view = "auth";

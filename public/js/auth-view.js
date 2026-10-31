@@ -42,17 +42,57 @@ export function showRecoveryCode({ code, email }) {
   body.querySelector("[data-recovery-done]").onclick = close;
 }
 
-export function renderAuth(root, onAuthenticated) {
+const plural = (count, word) => `${count} ${word}${count === 1 ? "" : "s"}`;
+
+/** Upgrade the current guest vault in place: same data, now with an email, password and recovery key. */
+export function openSaveVault({ tapeCount = 0, onSaved }) {
   const expectedToken = getToken();
-  let mode = "login";
+  const { body, close } = openSheet({
+    title: "Save your vault",
+    content: `<form class="account-form save-vault-form" data-save-vault-form><p class="save-vault-lede">${tapeCount ? `Keep your ${plural(tapeCount, "tape")} safe` : "Keep everything you add safe"} and open your vault on any device. Everything you’ve added stays right where it is.</p><label for="save-name">Name <span class="optional">optional</span></label><input id="save-name" class="text-field" name="displayName" autocomplete="nickname" maxlength="80" placeholder="What should we call you?" /><label for="save-email">Email address</label><input id="save-email" class="text-field" type="email" name="email" placeholder="you@example.com" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" maxlength="254" required />${passwordField({ id: "save-password", label: "Password", fresh: true })}<p class="hint">Use at least 12 characters. A few words works well. Next, you’ll get a recovery key in case you forget it.</p><p class="auth-error" data-save-error role="alert"></p><button class="btn" type="submit">Save my vault ${icons.chevronRight}</button></form>`,
+  });
+  wirePasswordVisibility(body);
+  const form = body.querySelector("form");
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = form.querySelector("button[type=submit]");
+    if (submit.disabled || !form.reportValidity()) return;
+    submit.disabled = true;
+    const label = submit.innerHTML;
+    submit.innerHTML = '<span class="spinner"></span> Saving your vault…';
+    body.querySelector("[data-save-error]").textContent = "";
+    try {
+      const result = await api.signup(form.elements.email.value.trim(), form.elements.password.value, { displayName: form.elements.displayName.value.trim(), expectedToken });
+      form.elements.password.value = "";
+      close();
+      await onSaved(result);
+      if (getToken() === `cookie:${result.sessionId}`) setTimeout(() => showRecoveryCode({ code: result.recoveryCode, email: result.user.email }), 340);
+    } catch (error) {
+      if (form.isConnected) body.querySelector("[data-save-error]").textContent = error.message;
+      else toast(error.message, { error: true });
+    } finally {
+      if (form.isConnected) { submit.disabled = false; submit.innerHTML = label; }
+    }
+  };
+}
+
+/**
+ * Welcome, sign-in, create-account and password-reset screens.
+ * `onStartGuest` opens a vault without an account. `guest` describes the
+ * current guest vault when its owner chooses to sign in to another account.
+ */
+export function renderAuth(root, onAuthenticated, { mode: initialMode = "welcome", onStartGuest, guest = null, onBack } = {}) {
+  const expectedToken = getToken();
+  let mode = initialMode === "welcome" && !onStartGuest ? "login" : initialMode;
   let busy = false;
   root.innerHTML = `<main id="workspace" class="auth-layout">
-    <section class="auth-story"><a href="/" class="brand" aria-label="VHS Vault home">${brandMark()}<span>VHS<span class="brand-light">Vault</span></span></a><div class="auth-story-copy"><p class="eyebrow">ANALOG OBSESSION. DIGITAL PRECISION.</p><h1>A home for<br>every tape.</h1><p>From a weekend find to a wall of classics.<br>Keep your collection in the picture.</p></div><div class="auth-art">${cassetteArt()}</div><div class="auth-caption"><span>REWIND. REDISCOVER. REPEAT.</span><span>VHS / HI-FI</span></div></section>
-    <section class="auth-panel"><div class="auth-content"><p class="eyebrow">YOUR PERSONAL ARCHIVE</p><h2 data-auth-title>Welcome to the vault.</h2><p class="auth-intro" data-auth-intro>Your collection, wherever you sign in.</p><div class="segmented auth-modes" role="group" aria-label="Account action"><button type="button" class="active" data-mode="login" aria-pressed="true">Sign in</button><button type="button" data-mode="signup" aria-pressed="false">Create account</button></div>
+    <section class="auth-story"><a href="/" class="brand" aria-label="VHS Vault home">${brandMark()}<span>VHS<span class="brand-light">Vault</span></span></a><div class="auth-story-copy"><p class="eyebrow">ANALOG OBSESSION. DIGITAL PRECISION.</p><h1>A home for <br>every tape.</h1><p>From a weekend find to a wall of classics.<br>Keep your collection in the picture.</p></div><div class="auth-art">${cassetteArt()}</div><div class="auth-caption"><span>REWIND. REDISCOVER. REPEAT.</span><span>VHS / HI-FI</span></div></section>
+    <section class="auth-panel"><div class="auth-content welcome-content" data-welcome hidden><p class="eyebrow">NO ACCOUNT NEEDED</p><h2>Start your vault<span class="accent-dot">.</span></h2><p class="auth-intro">Snap a shelf and see what you’ve got. Make an account later, whenever you’re ready.</p><ol class="welcome-steps"><li><span class="welcome-step-icon">${icons.camera}</span><div><strong>Snap a shelf</strong><p>Up to ten photos at a time.</p></div></li><li><span class="welcome-step-icon">${icons.check}</span><div><strong>Check the finds</strong><p>Fix a title, keep the keepers.</p></div></li><li><span class="welcome-step-icon">${icons.dollar}</span><div><strong>See what it’s worth</strong><p>Prices from real listings.</p></div></li></ol><button type="button" class="btn welcome-start" data-start-guest>Start my vault ${icons.chevronRight}</button><button type="button" class="auth-forgot" data-have-account>I already have an account</button><p class="welcome-error auth-error" data-welcome-error role="alert"></p></div>
+    <div class="auth-content" data-auth-forms>${guest ? `<button type="button" class="auth-back" data-auth-back>${icons.chevronLeft} Back to my vault</button>` : ""}<p class="eyebrow">YOUR PERSONAL ARCHIVE</p><h2 data-auth-title>Welcome to the vault.</h2><p class="auth-intro" data-auth-intro>Your collection, wherever you sign in.</p><div class="segmented auth-modes" role="group" aria-label="Account action"><button type="button" class="active" data-mode="login" aria-pressed="true">Sign in</button><button type="button" data-mode="signup" aria-pressed="false">Create account</button></div>
     <form class="auth-form" data-auth-form><label for="auth-email">Email address</label><input id="auth-email" class="text-field" type="email" name="email" placeholder="you@example.com" autocomplete="username" inputmode="email" autocapitalize="off" spellcheck="false" maxlength="254" required />
     <div class="auth-recovery-field" data-recovery-field hidden><label for="auth-recovery">Recovery key</label><input id="auth-recovery" class="text-field" name="recoveryCode" type="text" placeholder="Your saved recovery key" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="100" /></div>
     <div data-auth-password>${passwordField({ id: "auth-password", label: "Password" })}</div><p class="password-help" data-password-help hidden>Use at least 12 characters. A few words works well.</p><div class="auth-error" data-auth-error role="alert"></div><button class="btn" type="submit" data-auth-submit>Sign in ${icons.chevronRight}</button></form>
-    <button type="button" class="auth-forgot" data-forgot>Forgot password?</button><button type="button" class="auth-forgot" data-back-signin hidden>Back to sign in</button><p class="auth-recovery-explanation" data-recovery-explanation hidden>Use the recovery key saved when you created your account or from Account settings. A collection backup can restore your tapes into a new account if you no longer have the key.</p><div class="auth-footnote">${icons.camera}<p>Photograph a shelf. Review the finds.<br>Keep a backup you can take with you.</p></div></div><p class="auth-bottom mono">BUILT FOR COLLECTORS. EVERY LAST COPY.</p></section></main>`;
+    <button type="button" class="auth-forgot" data-forgot>Forgot password?</button><button type="button" class="auth-forgot" data-back-signin hidden>Back to sign in</button><p class="auth-recovery-explanation" data-recovery-explanation hidden>Use the recovery key saved when you created your account or from Account settings. A collection backup can restore your tapes into a new account if you no longer have the key.</p>${guest?.tapeCount ? `<p class="auth-guest-warning" role="note">Your guest vault has ${plural(guest.tapeCount, "tape")}. Signing in to another account leaves it behind. To keep it, go back and choose <strong>Save your vault</strong> instead.</p>` : ""}${onStartGuest && !guest ? `<button type="button" class="auth-forgot" data-skip-account>Skip for now and start without an account</button>` : ""}<div class="auth-footnote">${icons.camera}<p>Photograph a shelf. Review the finds.<br>Keep a backup you can take with you.</p></div></div><p class="auth-bottom mono">BUILT FOR COLLECTORS. EVERY LAST COPY.</p></section></main>`;
   const form = root.querySelector("form");
   const error = root.querySelector("[data-auth-error]");
   const submit = root.querySelector("[data-auth-submit]");
@@ -60,6 +100,9 @@ export function renderAuth(root, onAuthenticated) {
   function selectMode(next) {
     if (busy) return;
     mode = next;
+    root.querySelector("[data-welcome]").hidden = mode !== "welcome";
+    root.querySelector("[data-auth-forms]").hidden = mode === "welcome";
+    if (mode === "welcome") return;
     const reset = mode === "reset";
     const signup = mode === "signup";
     root.querySelector("[data-auth-title]").textContent = reset ? "Find your way back." : signup ? "Make room for your collection." : "Welcome to the vault.";
@@ -78,9 +121,34 @@ export function renderAuth(root, onAuthenticated) {
     wirePasswordVisibility(root.querySelector("[data-auth-password]"));
   }
   wirePasswordVisibility(root);
+  async function startGuest(button) {
+    if (busy) return;
+    busy = true;
+    const label = button.innerHTML;
+    const error = root.querySelector("[data-welcome-error]");
+    error.textContent = "";
+    root.querySelectorAll("button").forEach((item) => item.disabled = true);
+    button.innerHTML = '<span class="spinner"></span> Opening your vault…';
+    try { await onStartGuest(); }
+    catch (err) {
+      if (!root.isConnected) return toast(err.message, { error: true });
+      selectMode("welcome");
+      error.textContent = err.message;
+    } finally {
+      busy = false;
+      if (button.isConnected) { root.querySelectorAll("button").forEach((item) => item.disabled = false); button.innerHTML = label; }
+    }
+  }
+  root.querySelector("[data-start-guest]").onclick = (event) => startGuest(event.currentTarget);
+  root.querySelector("[data-have-account]").onclick = () => selectMode("login");
+  const skip = root.querySelector("[data-skip-account]");
+  if (skip) skip.onclick = () => { busy = false; selectMode("welcome"); startGuest(root.querySelector("[data-start-guest]")); };
+  root.querySelector("[data-auth-back]")?.addEventListener("click", () => onBack?.());
   root.querySelectorAll("[data-mode]").forEach((button) => button.onclick = () => selectMode(button.dataset.mode));
   root.querySelector("[data-forgot]").onclick = () => selectMode("reset");
   root.querySelector("[data-back-signin]").onclick = () => selectMode("login");
+  if (mode !== "login") selectMode(mode);
+  else root.querySelector("[data-welcome]").hidden = true;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy || !form.reportValidity()) return;

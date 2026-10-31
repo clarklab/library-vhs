@@ -108,7 +108,7 @@ export async function requireAuth(req, stores = {}) {
   if (expected && expected !== sessionId) return null;
   const user = await users.get(session.userId, { type: "json", consistency: "strong" });
   if (!user || user.id !== session.userId || sessionVersion(session) !== sessionVersion(user)) return null;
-  return { userId: session.userId, email: user.email, user, token, sessionId, authSource: credential.source };
+  return { userId: session.userId, email: user.email, user, token, sessionId, authSource: credential.source, expiresAt: session.expiresAt };
 }
 
 // ---------- misc ----------

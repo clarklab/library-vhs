@@ -1,6 +1,6 @@
 import {
   usersStore, sessionsStore, json, requireAuth, readBody, createSession, destroySession,
-  requestSession, sessionCookie, sessionMarker, sameOriginMutation, newId, normalizeEmail, EMAIL_RE,
+  requestSession, sessionCookie, sessionMarker, sameOriginMutation, newId, normalizeEmail, EMAIL_RE, SESSION_TTL_MS,
 } from "../lib/util.mjs";
 import {
   AccountError, displayName, validateNewPassword, hashPassword, verifyPassword,
@@ -41,6 +41,29 @@ export function createAuthHandler({ getUsers = usersStore, getSessions = session
         if (optional) return null;
         throw new AccountError("Not signed in.", 401, "AUTH_REQUIRED");
       };
+      // A guest keeps its ID, data and current session; it gains an email, password and recovery key.
+      const claimGuest = async (auth, { email, password, name, recoveryCode }) => {
+        let indexWriteError;
+        try { await users.setJSON(`email/${email}`, { userId: auth.userId }, { onlyIfNew: true }); } catch (error) { indexWriteError = error; }
+        const owner = await users.get(`email/${email}`, { type: "json", consistency: "strong" });
+        if (owner?.userId !== auth.userId) {
+          if (owner?.userId) throw new AccountError("An account with that email already exists. Sign in or use your recovery code.", 409, "EMAIL_EXISTS");
+          throw indexWriteError || new AccountError("Your account could not be created. Try again.", 503);
+        }
+        const passHash = hashPassword(password), now = new Date().toISOString();
+        let user;
+        try {
+          user = await updateUserRecord({ store: users, userId: auth.userId, claimEmail: email, change(current) {
+            if (current.guest !== true) throw new AccountError("This vault already has an account. Reload to continue.", 409, "ALREADY_CLAIMED");
+            const { guest, ...rest } = current;
+            return { ...rest, email, displayName: name || current.displayName || "", passHash, recoveryHash: hashRecoveryCode(recoveryCode), recoveryCreatedAt: now, claimedAt: now };
+          } });
+        } catch (error) {
+          await users.delete(`email/${email}`).catch(() => {});
+          throw error;
+        }
+        return reply({ user: publicUser(user), sessionId: auth.sessionId, recoveryCode }, 201);
+      };
       const establishSession = async (user, extra = {}, status = 200) => {
         const session = await createSession(user.id, sessionVersion(user), sessions);
         return reply({ user: publicUser(user), sessionId: session.sessionId, ...extra }, status, { "set-cookie": sessionCookie(req, session.token) });
@@ -48,6 +71,12 @@ export function createAuthHandler({ getUsers = usersStore, getSessions = session
 
       if (req.method === "GET" && action === "me") {
         const auth = await authenticate();
+        // A guest has no password to sign back in with, so keep its session from lapsing.
+        if (auth.user.guest === true && auth.expiresAt - Date.now() < SESSION_TTL_MS / 2) {
+          const renewed = await establishSession(auth.user);
+          await destroySession(auth.token, sessions);
+          return renewed;
+        }
         return reply({ user: publicUser(auth.user), sessionId: auth.sessionId }, 200,
           auth.authSource === "bearer" ? { "set-cookie": sessionCookie(req, auth.token) } : {});
       }
@@ -60,6 +89,17 @@ export function createAuthHandler({ getUsers = usersStore, getSessions = session
       if (Number(req.headers.get("content-length")) > 16384) throw new AccountError("This account request is too large.", 413);
       const body = await readBody(req);
 
+      if (req.method === "POST" && action === "guest") {
+        const current = await authenticate({ optional: true });
+        if (current) return reply({ user: publicUser(current.user), sessionId: current.sessionId });
+        const guest = { id: newId(), guest: true, email: null, displayName: "", passHash: null, recoveryHash: null, sessionVersion: 0, settings: {}, createdAt: new Date().toISOString() };
+        let writeError;
+        try { await users.setJSON(guest.id, guest, { onlyIfNew: true }); } catch (error) { writeError = error; }
+        const saved = await users.get(guest.id, { type: "json", consistency: "strong" });
+        if (saved?.guest !== true || saved.createdAt !== guest.createdAt) throw writeError || new AccountError("Your vault could not be opened. Try again.", 503);
+        return establishSession(guest, {}, 201);
+      }
+
       if (req.method === "POST" && action === "signup") {
         const email = normalizeEmail(body.email);
         if (email.length > 254 || !EMAIL_RE.test(email)) throw new AccountError("Enter a valid email address.", 400, "INVALID_EMAIL");
@@ -69,6 +109,8 @@ export function createAuthHandler({ getUsers = usersStore, getSessions = session
           throw new AccountError("An account with that email already exists. Sign in or use your recovery code.", 409, "EMAIL_EXISTS");
         }
         const recoveryCode = makeRecoveryCode();
+        const current = await authenticate({ optional: true });
+        if (current?.user.guest === true) return await claimGuest(current, { email, password, name, recoveryCode });
         const user = {
           id: newId(), email, displayName: name, passHash: hashPassword(password),
           recoveryHash: hashRecoveryCode(recoveryCode), recoveryCreatedAt: new Date().toISOString(),

@@ -127,7 +127,8 @@ async function request(method, path, body, { signal, timeoutMs = 45000, expected
 }
 
 export const api = {
-  signup: (email, password, options = {}) => request("POST", "/api/auth/signup", { email, password }, options),
+  startGuest: (options = {}) => request("POST", "/api/auth/guest", {}, options),
+  signup: (email, password, { displayName, ...options } = {}) => request("POST", "/api/auth/signup", { email, password, ...(displayName ? { displayName } : {}) }, options),
   login: (email, password, options = {}) => request("POST", "/api/auth/login", { email, password }, options),
   logout: (options = {}) => request("POST", "/api/auth/logout", undefined, options),
   me: (options = {}) => request("GET", "/api/auth/me", undefined, options),

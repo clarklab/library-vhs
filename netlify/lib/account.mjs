@@ -71,7 +71,8 @@ export function displayName(value) {
 export function publicUser(user) {
   return {
     id: user.id,
-    email: user.email,
+    email: user.email || null,
+    guest: user.guest === true,
     displayName: user.displayName || "",
     settings: { hasOmdbKey: Boolean(user.settings?.omdbKey) },
     createdAt: user.createdAt,
@@ -88,14 +89,16 @@ export function sessionVersion(user) {
  * always confirmed: the installed Blobs SDK can report false success on CAS.
  * Operation markers survive an immediately-following settings/profile write.
  */
-export async function updateUserRecord({ store, userId, change }) {
+export async function updateUserRecord({ store, userId, change, claimEmail }) {
   const operation = randomUUID();
   for (let attempt = 0; attempt < 5; attempt++) {
     const existing = await store.getWithMetadata(userId, { type: "json", consistency: "strong" });
     if (!existing?.data || existing.data.id !== userId) throw new AccountError("This account is unavailable. Sign in again.", 401, "AUTH_REQUIRED");
     if (!existing.etag) throw new AccountError("The account could not be safely updated. Try again.", 503, "ACCOUNT_CONFLICT");
     const next = await change(existing.data);
-    if (next.id !== userId || next.email !== existing.data.email) throw new AccountError("Account identity cannot be changed here.", 400);
+    // Only a guest account may gain an email, and only the one whose index it already owns.
+    const claiming = claimEmail && existing.data.guest === true && next.email === claimEmail;
+    if (next.id !== userId || (next.email !== existing.data.email && !claiming)) throw new AccountError("Account identity cannot be changed here.", 400);
     next.accountOperations = [...(existing.data.accountOperations || []).slice(-15), operation];
     next.updatedAt = new Date().toISOString();
     let writeError;

@@ -48,6 +48,8 @@ Temporary scan photos are deleted when jobs finish. Abandoned photos **expire af
 
 ## Accounts and recovery
 
+New visitors see a short welcome screen and can **start without an account**. “Start my vault” creates a guest vault: a real server-side account with no email or password, held by its session cookie. Scanning, scouting, pricing and backups all work the same. Guests see a “Save your vault” prompt in the header, sidebar and Account screen. Saving adds an email, password and recovery key to the same account ID, so nothing moves, and the current session stays signed in. Guest sessions renew when the app is opened, but a guest vault can still be lost if browser cookies are cleared, so the app encourages saving it. Signing in to another account from a guest vault shows a warning first, because that guest vault is left behind (a full JSON backup can still carry its contents across).
+
 Create an account with an email address, an optional display name and a password of 12–128 characters. Existing accounts and their older password hashes remain supported. Account settings let you update your display name, change your password, create or replace a recovery key, and sign out every session. Password changes and password recovery revoke older sessions. Profile, password and settings changes merge against fresh conditional revisions so a concurrent settings save cannot restore an old password or undo session revocation.
 
 New sessions use a 90-day `HttpOnly`, `Secure`, `SameSite=Strict` cookie. Local HTTP development uses a separate cookie without `Secure`. The API still accepts legacy bearer sessions for migration; `/api/auth/me` sets their cookie. The browser keeps a non-secret session marker to prevent a request from silently switching accounts after another tab signs in. Cookie mutations require a matching origin. Uploaded covers require the owner's current session and are served with `private, no-store` caching. Auth routes have a Netlify IP/domain rate limit; password hashes use salted scrypt, and the stored recovery key is hashed.
@@ -131,7 +133,8 @@ Authenticated routes use the session cookie and JSON requests/responses. Legacy 
 
 | Route | Contract |
 | --- | --- |
-| `POST /api/auth/signup`, `/login`, `/logout`; `GET /api/auth/me` | Account and session management |
+| `POST /api/auth/signup`, `/login`, `/logout`; `GET /api/auth/me` | Account and session management. Signup from a guest session upgrades that guest in place and keeps its session |
+| `POST /api/auth/guest` | `{}`; opens a guest vault with a session cookie, or returns the current session if one exists |
 | `PATCH /api/auth/profile` | `{displayName}`; update the current account profile |
 | `POST /api/auth/password`, `/recovery`, `/logout-all` | Confirm `currentPassword` to change password (`newPassword`), replace the recovery key, or revoke every session |
 | `POST /api/auth/reset` | `{email,recoveryCode,newPassword}`; recover access, revoke older sessions and return a new recovery key |

@@ -236,3 +236,41 @@ test("local development cookies work on localhost; nonlocal production cookies a
   assert.doesNotMatch(sessionCookie(new Request("http://localhost:8888/api/auth/login"), TOKEN), /; Secure/);
   assert.match(sessionCookie(new Request("http://vault.test/api/auth/login"), TOKEN), /; Secure/);
 });
+
+test("a guest vault opens without credentials and later becomes an account in place", async () => {
+  const { auth, users, sessions } = fixture();
+  const opened = await auth(request("guest", {}, anonymous));
+  assert.equal(opened.status, 201);
+  const { user: guest, sessionId } = await opened.json();
+  assert.equal(guest.guest, true); assert.equal(guest.email, null); assert.equal(guest.hasRecoveryCode, false);
+  const token = publicCookie(opened).split("=")[1];
+  const asGuest = { cookie: `__Host-vhs_session=${token}`, marker: sessionId };
+  assert.equal((await (await auth(request("guest", {}, asGuest))).json()).user.id, guest.id, "an existing session is reused");
+  assert.equal((await auth(request("password", { currentPassword: "", newPassword: PASSWORD }, asGuest))).status, 403);
+
+  const taken = await auth(request("signup", { email: USER.email, password: PASSWORD }, asGuest));
+  assert.equal(taken.status, 409); assert.equal((await users.get(guest.id)).guest, true);
+
+  const claimed = await auth(request("signup", { email: "Guest@Example.com", password: PASSWORD, displayName: "Sam" }, asGuest));
+  assert.equal(claimed.status, 201); assert.equal(claimed.headers.get("set-cookie"), null);
+  const body = await claimed.json();
+  assert.equal(body.user.id, guest.id); assert.equal(body.user.guest, false); assert.equal(body.user.email, "guest@example.com");
+  assert.equal(body.sessionId, sessionId); assert.match(body.recoveryCode, /^VHS-/); assert.equal(body.user.hasRecoveryCode, true);
+  assert.deepEqual(await users.get("email/guest@example.com"), { userId: guest.id });
+  assert.ok(await sessions.get(token), "the guest session keeps working");
+  assert.equal((await (await auth(request("me", undefined, asGuest))).json()).user.email, "guest@example.com");
+  const login = await auth(request("login", { email: "guest@example.com", password: PASSWORD }, anonymous));
+  assert.equal((await login.json()).user.id, guest.id);
+  assert.equal((await auth(request("signup", { email: "other@example.com", password: PASSWORD }, asGuest))).status, 201, "a claimed vault no longer upgrades in place");
+  assert.notEqual((await users.get("email/other@example.com")).userId, guest.id);
+});
+
+test("a failed guest claim releases the email", async () => {
+  const { auth, users } = fixture({ seeded: false });
+  const opened = await auth(request("guest", {}, anonymous));
+  const { user, sessionId } = await opened.json();
+  const asGuest = { cookie: publicCookie(opened), marker: sessionId };
+  users.beforeSet = async (key) => { if (key === user.id) throw new Error("storage down"); };
+  assert.equal((await auth(request("signup", { email: "sam@example.com", password: PASSWORD }, asGuest))).status, 409);
+  assert.equal(await users.get("email/sam@example.com"), null); assert.equal((await users.get(user.id)).guest, true);
+});

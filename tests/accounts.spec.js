@@ -2,8 +2,8 @@ import { test, expect } from "@playwright/test";
 
 const firstSession = "a".repeat(32), nextSession = "b".repeat(32);
 const key = "VHS-ABCDE-FGHIJ-KLMNO-PQRST-UVWXY-Z1234";
-async function accountApp(page, { signedIn = false, logoutFailure = false } = {}) {
-  let user = { id: "account-test", email: "collector@example.com", displayName: "", createdAt: "2026-10-01T12:00:00.000Z", hasRecoveryCode: true, settings: {} };
+async function accountApp(page, { signedIn = false, logoutFailure = false, welcome = false, tapes = [] } = {}) {
+  let user = { id: "account-test", email: "collector@example.com", guest: false, displayName: "", createdAt: "2026-10-01T12:00:00.000Z", hasRecoveryCode: true, settings: {} };
   let sessionId = firstSession;
   const requests = [], errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -13,11 +13,20 @@ async function accountApp(page, { signedIn = false, logoutFailure = false } = {}
     requests.push({ path, body, headers: req.headers() });
     const send = (data, status = 200) => route.fulfill({ status, contentType: "application/json", body: JSON.stringify(data) });
     if (path === "/api/auth/me") return signedIn ? send({ user, sessionId }) : send({ error: "Not signed in" }, 401);
+    if (path === "/api/auth/guest") {
+      signedIn = true;
+      user = { ...user, email: null, guest: true, hasRecoveryCode: false };
+      return send({ user, sessionId }, 201);
+    }
+    if (path === "/api/auth/signup" && user.guest) {
+      user = { ...user, email: body.email, guest: false, displayName: body.displayName || "", hasRecoveryCode: true };
+      return send({ user, sessionId, recoveryCode: key }, 201);
+    }
     if (["/api/auth/signup", "/api/auth/reset", "/api/auth/login"].includes(path)) {
       signedIn = true;
       return send({ user, sessionId, ...(path.endsWith("login") ? {} : { recoveryCode: key }) });
     }
-    if (path === "/api/tapes") return send({ tapes: [] });
+    if (path === "/api/tapes") return send({ tapes });
     if (path === "/api/settings") return send({ settings: { omdbActive: true } });
     if (path === "/api/auth/profile") { user = { ...user, displayName: body.displayName }; return send({ user }); }
     if (path === "/api/auth/password") {
@@ -33,6 +42,7 @@ async function accountApp(page, { signedIn = false, logoutFailure = false } = {}
     return send({ error: `Unmocked ${path}` }, 404);
   });
   await page.goto("/");
+  if (!signedIn && !welcome) await page.getByRole("button", { name: "I already have an account" }).click();
   return { requests, errors };
 }
 const openAccount = async (page) => {
@@ -124,5 +134,52 @@ test("account and backup controls fit a phone and route imports to the new flow"
   await expect(page.getByRole("button", { name: "Download full backup" })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: "test-results/backup-mobile.png", fullPage: true });
+  expect(app.errors).toEqual([]);
+});
+
+test("a new visitor starts a guest vault in one tap and saves it to an account later", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const tape = { id: "t1", title: "Alien", format: "VHS", status: "keep", createdAt: "2026-10-01T12:00:00.000Z" };
+  const app = await accountApp(page, { welcome: true, tapes: [tape] });
+  await expect(page.getByRole("heading", { name: "Start your vault." })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/welcome-mobile.png", fullPage: true });
+  await page.getByRole("button", { name: "Start my vault" }).click();
+  await expect(page.getByRole("button", { name: "Save your vault" }).first()).toBeVisible();
+  expect(app.requests.some((r) => r.path === "/api/auth/signup")).toBe(false);
+  await openAccount(page);
+  await expect(page.getByRole("heading", { name: "Save your vault." })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Change password" })).toHaveCount(0);
+  await page.screenshot({ path: "test-results/guest-account-mobile.png", fullPage: true });
+  await page.locator(".save-vault-card [data-save-vault]").click();
+  const sheet = page.getByRole("dialog", { name: "Save your vault" });
+  await expect(sheet).toContainText("Keep your 1 tape safe");
+  await sheet.getByLabel("Email address").fill("guest@example.com");
+  await sheet.getByLabel("Password", { exact: true }).fill("a longer pass phrase");
+  await sheet.getByRole("button", { name: "Save my vault" }).click();
+  const recovery = page.getByRole("dialog", { name: "Save your recovery key" });
+  await expect(recovery.getByLabel("Your recovery key")).toHaveValue(key);
+  await recovery.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Your account" })).toBeVisible();
+  await expect(page.locator("[data-save-vault]")).toHaveCount(0);
+  expect(app.requests.find((r) => r.path.endsWith("signup")).body).toEqual({ email: "guest@example.com", password: "a longer pass phrase" });
+  expect(await page.evaluate(() => localStorage.getItem("vhsvault.token"))).toBe(`cookie:${firstSession}`);
+  expect(app.errors).toEqual([]);
+});
+
+test("a guest can sign in to an existing account after a warning, or go back", async ({ page }) => {
+  const app = await accountApp(page, { welcome: true, tapes: [{ id: "t1", title: "Jaws", format: "VHS", status: "keep", createdAt: "2026-10-01T12:00:00.000Z" }] });
+  await page.getByRole("button", { name: "Start my vault" }).click();
+  await openAccount(page);
+  await page.getByRole("button", { name: "Sign in to another account" }).click();
+  await expect(page.getByRole("note")).toContainText("Your guest vault has 1 tape");
+  await page.getByRole("button", { name: "Back to my vault" }).click();
+  await expect(page.getByRole("heading", { name: "Save your vault." })).toBeVisible();
+  await page.getByRole("button", { name: "Sign in to another account" }).click();
+  await page.getByLabel("Email address").fill("collector@example.com");
+  await page.getByLabel("Password", { exact: true }).fill("a longer pass phrase");
+  await page.locator("[data-auth-submit]").click();
+  await expect(page.locator("[data-start-scan]")).toBeVisible();
+  expect(app.requests.some((r) => r.path.endsWith("login"))).toBe(true);
   expect(app.errors).toEqual([]);
 });
