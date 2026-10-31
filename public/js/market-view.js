@@ -24,7 +24,8 @@ export function marketMeta(estimate) {
   if (!isLive(estimate)) return ["AI estimate", date].filter(Boolean).join(" · ");
   const market = estimate.market || {};
   const count = Number.isInteger(market.sampleCount) && market.sampleCount >= 0 ? market.sampleCount : market.listings?.length || 0;
-  const label = market.basis === "sold" ? `${count} sold ${count === 1 ? "listing" : "listings"}` : market.basis === "asking" ? `${count} asking ${count === 1 ? "price" : "prices"}` : "No matched price evidence";
+  const ebay = market.provider === "ebay_browse" ? "eBay " : "";
+  const label = market.basis === "sold" ? `${count} sold ${count === 1 ? "listing" : "listings"}` : market.basis === "asking" ? `${count} ${ebay}asking ${count === 1 ? "price" : "prices"}` : "No matched price evidence";
   return [label, date ? `Checked ${date}` : ""].filter(Boolean).join(" · ");
 }
 

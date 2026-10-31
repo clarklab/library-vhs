@@ -1,5 +1,7 @@
 export const MARKET_DOMAINS = ["ebay.com/itm", "mercari.com/us/item", "etsy.com/listing", "discogs.com/sell/item"];
 export const MARKET_STATUSES = ["available", "no_matches", "unavailable", "needs_identification"];
+export const MARKET_PROVIDERS = ["web_search", "ebay_browse"];
+export const MARKET_LISTING_LIMIT = 10;
 const text = (value, max = 300) => typeof value === "string" ? value.trim().slice(0, max) : "";
 const amount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1_000_000 ? Math.round(value * 100) / 100 : null;
 const normalized = (value) => text(value, 10000).normalize("NFKD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -74,11 +76,12 @@ export function normalizeMarketListing(raw, index = 0) {
 export function validMarketEstimate(value) {
   const market = value?.market;
   if (!market || typeof market !== "object" || Array.isArray(market)) return false;
-  const fields = ["status", "basis", "fetchedAt", "sampleCount", "askingCount", "soldCount", "listings", "warnings"];
+  const fields = ["provider", "status", "basis", "fetchedAt", "sampleCount", "askingCount", "soldCount", "listings", "warnings"];
   if (Object.keys(market).some((key) => !fields.includes(key)) || !MARKET_STATUSES.includes(market.status) || !["asking", "sold", "none"].includes(market.basis)) return false;
   if (typeof market.fetchedAt !== "string" || !Number.isFinite(Date.parse(market.fetchedAt))) return false;
   if (!Array.isArray(market.warnings) || market.warnings.length > 6 || market.warnings.some((warning) => typeof warning !== "string" || warning.length > 200)) return false;
-  if (!Array.isArray(market.listings) || market.listings.length > 8) return false;
+  if (market.provider !== undefined && !MARKET_PROVIDERS.includes(market.provider)) return false;
+  if (!Array.isArray(market.listings) || market.listings.length > MARKET_LISTING_LIMIT) return false;
   const listingFields = ["id", "title", "url", "price", "currency", "kind", "condition", "edition", "shipping", "soldAt", "evidence"];
   for (const listing of market.listings) {
     if (!listing || typeof listing !== "object" || Object.keys(listing).some((key) => !listingFields.includes(key))) return false;
@@ -89,13 +92,16 @@ export function validMarketEstimate(value) {
   if (normalized.market.listings.length !== market.listings.length) return false;
   if (market.listings.some((listing, index) => JSON.stringify(normalized.market.listings[index]) !== JSON.stringify(Object.fromEntries(listingFields.map((key) => [key, listing[key]]))))) return false;
   return ["known", "low", "high", "typical", "liveComps", "worthChecking"].every((key) => value[key] === normalized[key])
+    && (market.provider === undefined || market.provider === normalized.market.provider)
     && ["status", "basis", "sampleCount", "askingCount", "soldCount"].every((key) => market[key] === normalized.market[key]);
 }
 
 export function normalizeMarketValue(result) {
   const input = result?.market || {};
   const seen = new Set();
-  const listings = (Array.isArray(input.listings) ? input.listings : []).slice(0, 8).flatMap((raw) => {
+  // Older saved results predate eBay lookups and came from web search.
+  const provider = MARKET_PROVIDERS.includes(input.provider) ? input.provider : "web_search", ebay = provider === "ebay_browse";
+  const listings = (Array.isArray(input.listings) ? input.listings : []).slice(0, MARKET_LISTING_LIMIT).flatMap((raw) => {
     const item = normalizeMarketListing(raw, seen.size);
     if (!item || seen.has(item.url)) return [];
     seen.add(item.url); return [item];
@@ -110,20 +116,22 @@ export function normalizeMarketValue(result) {
   const status = known ? "available" : MARKET_STATUSES.includes(input.status) && input.status !== "available" ? input.status : "no_matches";
   const fetchedAt = typeof input.fetchedAt === "string" && Number.isFinite(Date.parse(input.fetchedAt)) ? input.fetchedAt : null;
   const warnings = [...new Set([
-    "Search indexes can lag; open the source to confirm its current price and availability.",
+    ebay ? "Active listings change quickly; open a listing to confirm its current price and availability." : "Search indexes can lag; open the source to confirm its current price and availability.",
     ...(basis === "asking" ? ["Asking prices are not completed-sale values."] : []),
     ...(known && prices.length < 3 ? ["Small sample: fewer than three comparable listings."] : []),
     ...(known && basis === "asking" && high > low && high >= low * 4 ? ["Asking prices vary widely. This range does not establish resale value or rarity."] : []),
     ...(Array.isArray(input.warnings) ? input.warnings.filter((item) => typeof item === "string").map((item) => item.slice(0, 200)).slice(0, 4) : []),
   ])].slice(0, 6);
   const summary = known
-    ? `${prices.length} comparable ${basis === "sold" ? "reported sold" : "asking-price"} listing${prices.length === 1 ? "" : "s"} found in live web search. The range excludes shipping, taxes and fees; verify edition and condition at the source.`
-    : status === "unavailable" ? "Live listing search is unavailable right now. No price has been substituted from AI memory."
+    ? ebay
+      ? `${prices.length} comparable active eBay asking-price listing${prices.length === 1 ? "" : "s"}, taken from the lowest-priced matches. The range excludes shipping, taxes and fees; verify edition and condition at the source.`
+      : `${prices.length} comparable ${basis === "sold" ? "reported sold" : "asking-price"} listing${prices.length === 1 ? "" : "s"} found in live web search. The range excludes shipping, taxes and fees; verify edition and condition at the source.`
+    : status === "unavailable" ? `${ebay ? "eBay listing search" : "Live listing search"} is unavailable right now. No price has been substituted from AI memory.`
       : status === "needs_identification" ? "Confirm the title and format before searching for comparable listings."
-        : "No comparable USD listing with a verifiable price was found. No price has been substituted from AI memory.";
+        : `No comparable USD listing with a verifiable price was found${ebay ? " among active eBay listings" : ""}. No price has been substituted from AI memory.`;
   return {
     known, low, high, typical, demand: "steady", factors: warnings.slice(0, 4), summary,
     source: "live_web_search", currency: "USD", liveComps: known, worthChecking: known && typical >= 20,
-    market: { status, basis, fetchedAt, sampleCount: prices.length, askingCount: asking.length, soldCount: sold.length, listings, warnings },
+    market: { provider, status, basis, fetchedAt, sampleCount: prices.length, askingCount: asking.length, soldCount: sold.length, listings, warnings },
   };
 }

@@ -1,5 +1,6 @@
 import { anthropic, MODEL, structured } from "./ai.mjs";
 import { MARKET_DOMAINS, comparableEvidence, listingUrl, normalizeMarketListing, normalizeMarketValue } from "./market-contract.mjs";
+import { ebayMarketValue } from "./ebay.mjs";
 
 export const MARKET_MODEL = process.env.VHS_MARKET_MODEL || MODEL;
 const SEARCH_SYSTEM = `Find observable prices for individual physical-media listings using web search. Never provide a value from memory.
@@ -98,4 +99,14 @@ export async function liveMarketValue(detail, { signal, client, runStructured = 
     if (signal?.aborted) throw new DOMException("Stopped", "AbortError");
     return result("unavailable", [], [unavailableReason(error, searchSignal?.aborted || Date.now() >= deadline)]);
   }
+}
+
+/** eBay listings first; web search only when eBay is not configured or cannot answer. */
+export async function marketValue(detail, { signal, ebay = ebayMarketValue, web = liveMarketValue } = {}) {
+  const fromEbay = await ebay(detail, { signal });
+  if (fromEbay && fromEbay.market.status !== "unavailable") return fromEbay;
+  const fallback = await web(detail, { signal });
+  if (!fromEbay) return fallback;
+  const warnings = [`${fromEbay.market.warnings.at(-1)} Used web search instead.`, ...fallback.market.warnings];
+  return { ...fallback, ...normalizeMarketValue({ ...fallback, market: { ...fallback.market, warnings } }) };
 }

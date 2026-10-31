@@ -6,6 +6,7 @@ test("live asking and sold evidence retain distinct labels, sample counts and ch
   assert.equal(marketLabel(price),"$10–$20"); assert.match(marketMeta(price),/2 asking prices/); assert.match(marketMeta(price),/Checked/); assert.match(marketEvidence(price),/asking prices, not completed sales/);
   const sold = {...price,market:{...price.market,basis:"sold"}}; assert.match(marketMeta(sold),/2 sold listings/); assert.match(marketEvidence(sold),/Matched sold evidence/);
   assert.match(marketMeta({...price,source:"ai_estimate"}),/AI estimate/);
+  assert.match(marketMeta({...price,market:{...price.market,provider:"ebay_browse"}}),/2 eBay asking prices/);
 });
 test("unknown and unavailable checks never acquire a fabricated price or a live-sales label",() => {
   assert.equal(marketLabel({...price,known:false,market:{status:"no_matches"}}),"No matching listings"); assert.equal(marketLabel({...price,known:false,market:{status:"unavailable"}}),"Check unavailable"); assert.equal(marketLabel(null),"Not checked");

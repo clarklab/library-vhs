@@ -1,11 +1,11 @@
 import { json, errorResponse, requireAuth, readBody } from "../lib/util.mjs";
 import { structured, aiErrorResponse, MODEL } from "../lib/ai.mjs";
 import { MEDIA_FORMATS, VALUE_SCHEMA, VALUE_SYSTEM, normalizeValue } from "../lib/value-contract.mjs";
-import { liveMarketValue } from "../lib/market.mjs";
+import { marketValue } from "../lib/market.mjs";
 
 export const config = { path: "/api/value" };
 
-export function createValueHandler({ authenticate = requireAuth, runStructured = structured, runMarket = liveMarketValue } = {}) {
+export function createValueHandler({ authenticate = requireAuth, runStructured = structured, runMarket = marketValue } = {}) {
   return async (req) => {
     if (req.method !== "POST") return errorResponse("Not found", 404);
     try {
