@@ -7,6 +7,7 @@ import { coverArt } from "./covers.js";
 import { openSheet, toast, spinnerButtonStart, spinnerButtonStop, wirePriceFields } from "./ui.js";
 import { state, go, back, upsertTapes } from "./app.js";
 import { tapeInsertMoment, buzz } from "./delight.js";
+import { startBarcodeScanner, formatBarcode, cameraErrorMessage } from "./barcode.js";
 
 // ---------- add sheet ----------
 
@@ -21,6 +22,13 @@ export function openAddSheet() {
           <div class="action-text">
             <h4>Scan a batch of photos</h4>
             <p>Capture up to 10 photos, then review the titles</p>
+          </div>
+        </button>
+        <button class="action-item" data-go="barcode">
+          <div class="action-icon" style="background:var(--pink)">${icons.barcode}</div>
+          <div class="action-text">
+            <h4>Scan a barcode</h4>
+            <p>Point your camera at the UPC on the box</p>
           </div>
         </button>
         <button class="action-item" data-go="addTitle">
@@ -212,6 +220,8 @@ function renderReview(root, items, { source, backView }) {
         imdbId: item.imdbId || "",
         posterUrl: item.posterUrl || "",
         edition: item.edition || "",
+        format: item.format || "VHS",
+        barcode: item.barcode || "",
         pricePaid: item.pricePaid ?? null,
         priceAsking: item.priceAsking ?? null,
         location,
@@ -340,6 +350,148 @@ export function renderAddTitle(root) {
       backView: "addTitle",
     });
   });
+}
+
+// ---------- scan a barcode ----------
+
+export function renderAddBarcode(root) {
+  root.innerHTML = `
+    <div class="screen no-tabs">
+      ${scanNav("Scan a Barcode")}
+      <div class="section-pad barcode-flow">
+        <div class="barcode-camera" data-camera-frame>
+          <video data-video playsinline muted aria-label="Camera preview"></video>
+          <div class="barcode-guide" aria-hidden="true"><span></span></div>
+          <div class="barcode-camera-message" data-camera-message>
+            <p data-camera-status role="status">Starting camera…</p>
+            <button type="button" class="btn" data-start-camera hidden>${icons.camera} Turn on camera</button>
+          </div>
+        </div>
+        <p class="hint barcode-tip">Point your camera at the barcode on the back of the tape. Hold steady and let it fill the box.</p>
+        <form class="barcode-manual" data-manual novalidate>
+          <label for="barcode-code">Or type the numbers under the barcode</label>
+          <div class="barcode-manual-row">
+            <input id="barcode-code" class="text-field" name="code" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0 86162 11134 1" />
+            <button class="btn gray" type="submit">Look up</button>
+          </div>
+        </form>
+        <div class="barcode-result" data-result hidden aria-live="polite"></div>
+      </div>
+    </div>`;
+
+  root.querySelector("[data-back]").addEventListener("click", () => go("library", null, { replace: true }));
+
+  const frame = root.querySelector("[data-camera-frame]");
+  const video = root.querySelector("[data-video]");
+  const status = root.querySelector("[data-camera-status]");
+  const startButton = root.querySelector("[data-start-camera]");
+  const result = root.querySelector("[data-result]");
+  const manual = root.querySelector("[data-manual]");
+  let scanner = null;
+  let looking = false;
+
+  const startCamera = async () => {
+    startButton.hidden = true;
+    status.textContent = "Starting camera…";
+    frame.classList.remove("live", "off");
+    try {
+      scanner = await startBarcodeScanner(video, { onCode: ({ code, format }) => lookup(code, format, { fromCamera: true }) });
+      if (looking || !stillOn("barcode") || !video.isConnected) { scanner.stop(); return; }
+      frame.classList.add("live");
+      status.textContent = "Looking for a barcode…";
+    } catch (error) {
+      if (looking || !video.isConnected) return;
+      frame.classList.add("off");
+      status.textContent = cameraErrorMessage(error);
+      startButton.hidden = false;
+      startButton.innerHTML = `${icons.camera} Try the camera again`;
+    }
+  };
+
+  async function lookup(code, format = "", { fromCamera = false } = {}) {
+    looking = true;
+    scanner?.stop();
+    buzz(12);
+    frame.classList.remove("live");
+    frame.classList.add("off");
+    status.textContent = fromCamera ? "Barcode read." : "Camera paused.";
+    startButton.hidden = true;
+    result.hidden = false;
+    result.innerHTML = `<p class="barcode-looking"><span class="spinner"></span> Looking up ${esc(formatBarcode(code))}…</p>`;
+    try {
+      const found = await api.lookupUpc(code, format);
+      if (!stillOn("barcode")) return;
+      showMatch(found);
+    } catch (error) {
+      if (!stillOn("barcode")) return;
+      result.innerHTML = `<p class="auth-error">${esc(error.message)}</p>`;
+      looking = false;
+      startButton.hidden = false;
+      startButton.innerHTML = `${icons.camera} Scan again`;
+    }
+  }
+
+  function showMatch(found) {
+    const matched = found.status === "found";
+    const pretty = formatBarcode(found.barcode);
+    result.innerHTML = `
+      <div class="barcode-match ${matched ? "found" : "missing"}">
+        <p class="eyebrow">UPC ${esc(pretty)}</p>
+        <h3>${matched ? "Found it" : "We couldn’t find this barcode"}</h3>
+        <p class="barcode-match-copy">${matched ? "Check the title, then we’ll fill in the details." : "Type the title and we’ll keep the barcode with it."}</p>
+        <form class="stack" data-confirm>
+          <input class="text-field" name="title" placeholder="Movie title" autocapitalize="words" value="${esc(matched ? found.title : "")}" required />
+          <input class="text-field" name="year" placeholder="Year (optional)" inputmode="numeric" value="${found.year ?? ""}" />
+          <button class="btn" type="submit">${icons.sparkles} Look Up Details</button>
+          <button class="btn gray" type="button" data-scan-again>${icons.barcode} Scan a different barcode</button>
+        </form>
+      </div>`;
+    const form = result.querySelector("[data-confirm]");
+    if (!matched) form.elements.title.focus();
+    result.querySelector("[data-scan-again]").onclick = () => {
+      result.hidden = true;
+      result.innerHTML = "";
+      looking = false;
+      startCamera();
+    };
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const title = form.elements.title.value.trim();
+      const yearRaw = form.elements.year.value.trim();
+      if (!title) {
+        toast("Type a movie title first.", { error: true });
+        return;
+      }
+      const item = {
+        title, year: /^\d{4}$/.test(yearRaw) ? Number(yearRaw) : null,
+        barcode: found.barcode, format: matched && found.format !== "Other" ? found.format : "VHS", edition: matched ? found.edition || "" : "",
+      };
+      const submit = form.querySelector("button[type=submit]");
+      spinnerButtonStart(submit, " Looking up…");
+      try {
+        const enriched = await enrichItems([item]);
+        if (!stillOn("barcode")) return;
+        renderReview(root, enriched, { source: "barcode", backView: "barcode" });
+      } catch (error) {
+        if (!stillOn("barcode")) return;
+        toast(error.message, { error: true });
+        spinnerButtonStop(submit);
+      }
+    };
+    result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  startButton.onclick = startCamera;
+  manual.onsubmit = (event) => {
+    event.preventDefault();
+    const digits = manual.elements.code.value.replace(/\D/g, "");
+    if (![8, 12, 13, 14].includes(digits.length)) {
+      toast("Type all 12 or 13 numbers under the barcode.", { error: true });
+      return;
+    }
+    lookup(digits);
+  };
+  startCamera();
 }
 
 // ---------- bulk paste ----------

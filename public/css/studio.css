@@ -26,6 +26,10 @@
   --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, sans-serif;
   --font-display: "Space Grotesk", "DM Sans", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, monospace;
+  /* App icon palette. */
+  --brand-cream: #f8f0e5;
+  --brand-ink: #1e1818;
+  --brand-red: #c21c42;
 }
 body {
   font-family: var(--font-sans);
@@ -213,14 +217,16 @@ button svg {
   width: 41px;
   height: 41px;
   display: inline-flex;
-  background: #d8e369;
-  border-radius: 9px;
-  color: #293326;
+  border-radius: 10px;
+  overflow: hidden;
   flex-shrink: 0;
+  box-shadow: 0 0 0 1px #1e181814;
 }
+.brand-mark img,
 .brand-mark svg {
   width: 100%;
   height: 100%;
+  display: block;
 }
 .brand-light {
   font-weight: 400;
@@ -1121,54 +1127,142 @@ button svg {
   background: var(--bg);
 }
 .auth-story {
-  margin: 18px;
-  padding: 37px 42px 27px;
-  border-radius: 12px;
-  background: #263c33;
-  color: #f4f3e7;
+  /* The app icon at page scale; every measurement follows the stripe height. */
+  --stripe: clamp(28px, 4.2vh, 44px);
+  /* Below the copy on short screens, otherwise in the icon's lower half. */
+  --stripes-top: max(60%, 590px);
+  --edge-width: calc(var(--stripe) * 3.76);
+  --notch: calc(var(--stripe) * 1.18);
+  position: relative;
+  padding: 40px calc(var(--edge-width) + var(--notch) + 40px) 40px 48px;
+  background: var(--brand-cream);
+  color: var(--brand-ink);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  min-height: calc(100dvh - 36px);
+  min-height: max(100dvh, calc(590px + var(--stripe) * 6.5));
 }
 .auth-story .brand {
-  color: #f4f3e7;
+  color: var(--brand-ink);
+  position: relative;
+  z-index: 2;
 }
 .auth-story-copy {
-  padding-top: clamp(40px, 7vh, 85px);
-}
-.auth-story .eyebrow {
-  font-size: 9px;
-  color: #b6c7a5;
+  position: relative;
+  z-index: 2;
+  padding-top: clamp(40px, 9vh, 110px);
+  max-width: 560px;
 }
 .auth-story h1 {
-  font-size: clamp(42px, 5vw, 72px);
-  letter-spacing: -0.065em;
-  line-height: 1.05;
+  font-size: clamp(36px, 4.1vw, 62px);
+  letter-spacing: -0.055em;
+  line-height: 1.02;
+  font-weight: 600;
+  max-width: 13ch;
 }
-.auth-story-copy > p:last-child {
-  font-size: 14px;
-  line-height: 1.7;
-  color: #b6c6b4;
+.auth-story-copy > p {
+  font-size: 17px;
+  line-height: 1.55;
+  color: #5b4f4a;
   margin-top: 20px;
+  max-width: 30ch;
 }
-.auth-art {
-  max-width: 480px;
-  width: 100%;
-  margin: auto;
-}
-.auth-art .cassette-scene {
-  aspect-ratio: 1.5;
-}
-.auth-caption {
+.auth-ways {
   display: flex;
-  justify-content: space-between;
-  gap: 20px;
-  font: 8px var(--font-mono);
-  color: #acbaa1;
-  letter-spacing: 0.1em;
-  border-top: 1px solid #a2b09533;
-  padding-top: 19px;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.auth-ways li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px 7px 9px;
+  border-radius: 999px;
+  background: #fffaf2;
+  border: 1px solid #e6d9c7;
+  font-size: 13px;
+  font-weight: 600;
+}
+.auth-ways svg {
+  width: 17px;
+  height: 17px;
+  color: var(--brand-red);
+}
+.tape-stripes {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--stripes-top);
+  display: grid;
+}
+.tape-stripes i {
+  height: var(--stripe);
+}
+.tape-stripes i:nth-child(1) { background: #ffcc33; }
+.tape-stripes i:nth-child(2) { background: #ff5d1c; }
+.tape-stripes i:nth-child(3) { background: #f91b28; }
+.tape-stripes i:nth-child(4) { background: #c21c42; }
+.tape-stripes i:nth-child(5) { background: #661f41; }
+.tape-edge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: calc(var(--edge-width) + var(--notch));
+  background: var(--brand-ink);
+  z-index: 1;
+  /* Same notch as the icon, measured in stripes from the top of the band. */
+  clip-path: polygon(
+    var(--notch) 0, 100% 0, 100% 100%, var(--notch) 100%,
+    var(--notch) calc(var(--stripes-top) + var(--stripe) * 4.58),
+    0 calc(var(--stripes-top) + var(--stripe) * 3.4),
+    0 calc(var(--stripes-top) + var(--stripe) * 1.65),
+    var(--notch) calc(var(--stripes-top) + var(--stripe) * 0.47)
+  );
+}
+.tape-reel {
+  position: absolute;
+  width: calc(var(--stripe) * 2.76);
+  height: calc(var(--stripe) * 2.76);
+  left: calc(var(--notch) - var(--stripe) * 1.38);
+  top: calc(var(--stripes-top) - var(--stripe) * 3.19);
+}
+.tape-reel + .tape-reel {
+  top: calc(var(--stripes-top) + var(--stripe) * 1.65);
+}
+.tape-spine {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 40%;
+  border-left: 7px solid #090806;
+  box-shadow: -5px 0 #2a2826, inset 4px 0 #2a2826;
+  background: repeating-linear-gradient(to bottom, transparent 0 calc(var(--stripe) * 1.4 - 4px), #100f0d calc(var(--stripe) * 1.4 - 4px) calc(var(--stripe) * 1.4));
+}
+.tape-spine i {
+  position: absolute;
+  left: 50%;
+  top: 14%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: #080606;
+}
+.tape-spine i + i {
+  top: 86%;
+}
+.tape-square {
+  position: absolute;
+  right: calc(40% + 9px);
+  top: calc(var(--stripes-top) + var(--stripe) * 0.45);
+  width: 12px;
+  height: 12px;
+  background: #050402;
 }
 .auth-panel {
   display: flex;
@@ -2087,7 +2181,7 @@ input[type="checkbox"] {
     margin-bottom: -30px;
   }
   .auth-story {
-    padding: 30px;
+    padding: 32px calc(var(--edge-width) + var(--notch) + 28px) 32px 32px;
   }
   .auth-panel {
     padding: 35px;
@@ -2327,10 +2421,9 @@ input[type="checkbox"] {
     grid-template-columns: 1fr;
   }
   .auth-story {
-    margin: 10px;
+    --stripe: 9px;
     min-height: auto;
-    padding: 24px;
-    border-radius: 10px;
+    padding: 22px 20px calc(var(--stripe) * 5 + 26px);
   }
   .auth-story .brand {
     font-size: 21px;
@@ -2340,24 +2433,28 @@ input[type="checkbox"] {
     height: 35px;
   }
   .auth-story-copy {
-    padding-top: 30px;
+    padding-top: 26px;
   }
   .auth-story h1 {
-    font-size: 40px;
+    font-size: 34px;
+    max-width: 15ch;
   }
-  .auth-story h1 br {
-    display: none;
+  .auth-story-copy > p {
+    font-size: 16px;
+    margin-top: 12px;
   }
-  .auth-story-copy > p:last-child {
-    font-size: 14px;
-    margin-top: 14px;
-    max-width: 26ch;
+  .auth-ways {
+    margin-top: 16px;
   }
-  .auth-story .eyebrow {
-    font-size: 7px;
+  .auth-ways li {
+    font-size: 12px;
+    padding: 6px 10px 6px 8px;
   }
-  .auth-art,
-  .auth-caption {
+  .tape-stripes {
+    top: auto;
+    bottom: 0;
+  }
+  .tape-edge {
     display: none;
   }
   .auth-panel {
@@ -3584,4 +3681,103 @@ input[type="checkbox"] {
 }
 @media (max-width: 380px) {
   .save-vault-chip span { display: none; }
+}
+
+/* Landing: the app icon's palette. */
+.auth-layout {
+  --tint: var(--brand-red);
+  --tint-fill: #f9e1e5;
+}
+.auth-layout .btn:hover:not(:disabled) { background: #a0163a; }
+.welcome-steps .welcome-step-icon { background: #ffcc33; color: var(--brand-ink); }
+.welcome-steps li:nth-child(2) .welcome-step-icon { background: #ffe0d2; color: #c7420f; }
+.welcome-steps li:nth-child(3) .welcome-step-icon { background: var(--tint-fill); color: var(--brand-red); }
+
+/* Scan a barcode */
+.barcode-flow { max-width: 560px; }
+.barcode-camera {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--brand-ink);
+  color: var(--brand-cream);
+}
+.barcode-camera video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.barcode-camera.live video { opacity: 1; }
+.barcode-guide {
+  position: absolute;
+  inset: 22% 12%;
+  border-radius: 10px;
+  box-shadow: 0 0 0 999px #1e18188c;
+  border: 2px solid #fffaf2d9;
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+.barcode-camera.live .barcode-guide { opacity: 1; }
+.barcode-guide span {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 50%;
+  height: 2px;
+  background: #f91b28;
+  box-shadow: 0 0 12px #f91b28;
+  animation: barcode-sweep 1.8s ease-in-out infinite alternate;
+}
+@keyframes barcode-sweep {
+  from { transform: translateY(-38px); }
+  to { transform: translateY(38px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .barcode-guide span { animation: none; }
+}
+.barcode-camera-message {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 14px 16px;
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  font-size: 14px;
+  background: linear-gradient(transparent, #1e1818d9);
+}
+.barcode-camera.off .barcode-camera-message {
+  inset: 0;
+  align-content: center;
+  justify-items: center;
+  text-align: center;
+  background:
+    linear-gradient(to bottom, transparent 62%, #ffcc33 62% 69%, #ff5d1c 69% 76%, #f91b28 76% 83%, #c21c42 83% 90%, #661f41 90%),
+    var(--brand-ink);
+  padding: 24px 24px 34%;
+}
+.barcode-tip { padding: 10px 2px 0; }
+.barcode-manual { margin-top: 18px; display: grid; gap: 8px; }
+.barcode-manual label { font-size: 13px; font-weight: 500; }
+.barcode-manual-row { display: flex; gap: 8px; }
+.barcode-manual-row input { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
+.barcode-result { margin-top: 20px; }
+.barcode-looking { display: flex; align-items: center; gap: 10px; color: var(--label-secondary); }
+.barcode-match {
+  padding: 18px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--separator);
+}
+.barcode-match.found { border-color: #c21c4240; }
+.barcode-match h3 { font-size: 22px; letter-spacing: -0.03em; }
+.barcode-match-copy { color: var(--label-secondary); font-size: 14px; margin: 4px 0 14px; }
+@media (max-width: 700px) {
+  .barcode-manual-row input, .barcode-match input { font-size: 16px; }
 }

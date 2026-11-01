@@ -147,6 +147,7 @@ export const api = {
   createScanJob: (payload, options = {}) => request("POST", "/api/scan-jobs", payload, { timeoutMs: 45000, ...options }),
   getScanJob: (id, options = {}) => request("GET", `/api/scan-jobs/${encodeURIComponent(id)}`, undefined, { timeoutMs: 45000, ...options }),
   enrich: (items, options = {}) => request("POST", "/api/enrich", { items }, { timeoutMs: 90000, ...options }),
+  lookupUpc: (code, format = "", options = {}) => request("POST", "/api/upc", { code, format }, { timeoutMs: 40000, ...options }),
   uploadCover: (tapeId, imageDataUrl) => request("POST", "/api/cover", { tapeId, image: imageDataUrl }),
   valueEstimate: (tape, options = {}) => request("POST", "/api/value", tape, { timeoutMs: 90000, ...options }),
 

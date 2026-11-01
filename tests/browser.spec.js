@@ -167,6 +167,17 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
         factors: [],
         estimatedAt: new Date().toISOString(),
       });
+    if (path === "/api/upc")
+      return send({
+        status: "found",
+        barcode: "086162111341",
+        title: "Alien",
+        year: 1979,
+        format: "VHS",
+        edition: "",
+        identifiedBy: "listings",
+        sources: ["ebay"],
+      });
     return send({ results: [] });
   });
   await page.goto("/");
@@ -178,6 +189,7 @@ async function setup(page, { empty = false, itemsPerPhoto = 2 } = {}) {
     getScans: () => scans,
     getCreates: () => creates,
     getScout: () => scout,
+    getTapes: () => tapes,
   };
 }
 async function screenshot(page, name) {
@@ -374,4 +386,23 @@ test("auth forms are labeled and responsive", async ({ page }) => {
     await page.evaluate(() => document.documentElement.scrollWidth),
   ).toBeLessThanOrEqual(390);
   await screenshot(page, "auth-mobile");
+});
+
+test("a typed UPC finds the tape and saves its barcode", async ({ page }) => {
+  const app = await setup(page);
+  await page.getByRole("button", { name: "Add tapes" }).click();
+  await page.getByRole("button", { name: /Scan a barcode/ }).click();
+  await expect(page.getByRole("heading", { name: "Scan a Barcode" }).or(page.locator(".nav-title", { hasText: "Scan a Barcode" }))).toBeVisible();
+  await page.getByLabel("Or type the numbers under the barcode").fill("0 86162 11134 1");
+  await page.getByRole("button", { name: "Look up", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Found it" })).toBeVisible();
+  await expect(page.locator("[data-confirm] [name=title]")).toHaveValue("Alien");
+  await screenshot(page, "barcode-found");
+  await page.getByRole("button", { name: "Look Up Details" }).click();
+  await page.getByRole("button", { name: "Add 1 to Library" }).click();
+  await expect
+    .poll(() => app.getTapes().find((tape) => tape.barcode)?.barcode)
+    .toBe("086162111341");
+  expect(app.getTapes().find((tape) => tape.barcode).format).toBe("VHS");
+  expect(app.errors).toEqual([]);
 });

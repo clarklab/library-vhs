@@ -40,6 +40,33 @@ async function accessToken({ clientId, clientSecret }, fetchImpl, signal, now) {
   return body.access_token;
 }
 
+/** One Browse API search; a rejected token is refreshed once. */
+async function browseSearch(params, { credentials, fetchImpl, signal, now }) {
+  for (let attempt = 0; ; attempt++) {
+    const token = await accessToken(credentials, fetchImpl, signal, now);
+    const url = new URL(`${API}/buy/browse/v1/item_summary/search`);
+    for (const [name, value] of Object.entries(params)) if (value) url.searchParams.set(name, value);
+    const response = await fetchImpl(url, { signal, headers: { authorization: `Bearer ${token}`, "x-ebay-c-marketplace-id": "EBAY_US", accept: "application/json" } });
+    if (response.status === 401 && attempt === 0) { tokens.delete(credentials.clientId); continue; }
+    if (!response.ok) throw Object.assign(new Error("eBay search failed"), { status: response.status });
+    const body = await response.json();
+    return Array.isArray(body.itemSummaries) ? body.itemSummaries : [];
+  }
+}
+
+/** Listing titles that share one barcode. Null without credentials; [] on any failure. */
+export async function ebayGtinTitles(gtin, { signal, fetchImpl = fetch, credentials = ebayCredentials(), now = Date.now, timeoutMs = 10000 } = {}) {
+  if (!credentials) return null;
+  const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
+  try {
+    const summaries = await browseSearch({ gtin, limit: "20" }, { credentials, fetchImpl, signal: requestSignal, now });
+    return [...new Set(summaries.map((summary) => typeof summary?.title === "string" ? summary.title.trim().slice(0, 200) : "").filter(Boolean))];
+  } catch {
+    if (signal?.aborted) throw new DOMException("Stopped", "AbortError");
+    return [];
+  }
+}
+
 /** Keyword query for one item. eBay treats parentheses and commas as OR syntax. */
 export function ebayQuery(detail) {
   const parts = [detail.format === "CD" ? detail.artist : "", detail.title, detail.edition, FORMAT_WORDS[detail.format]];
@@ -124,18 +151,7 @@ export async function ebayMarketValue(detail, { signal, fetchImpl = fetch, crede
   if (cached?.expiresAt > now() && cached.result) return cached.result;
 
   const requestSignal = signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs);
-  const search = async (params) => {
-    for (let attempt = 0; ; attempt++) {
-      const token = await accessToken(credentials, fetchImpl, requestSignal, now);
-      const url = new URL(`${API}/buy/browse/v1/item_summary/search`);
-      for (const [name, value] of Object.entries({ ...params, limit: "100", filter: "buyingOptions:{FIXED_PRICE},priceCurrency:USD,itemLocationCountry:US" })) if (value) url.searchParams.set(name, value);
-      const response = await fetchImpl(url, { signal: requestSignal, headers: { authorization: `Bearer ${token}`, "x-ebay-c-marketplace-id": "EBAY_US", accept: "application/json" } });
-      if (response.status === 401 && attempt === 0) { tokens.delete(credentials.clientId); continue; }
-      if (!response.ok) throw Object.assign(new Error("eBay search failed"), { status: response.status });
-      const body = await response.json();
-      return Array.isArray(body.itemSummaries) ? body.itemSummaries : [];
-    }
-  };
+  const search = (params) => browseSearch({ ...params, limit: "100", filter: "buyingOptions:{FIXED_PRICE},priceCurrency:USD,itemLocationCountry:US" }, { credentials, fetchImpl, signal: requestSignal, now });
 
   try {
     const category_ids = CATEGORIES[detail.format], gtin = barcodeOf(detail);

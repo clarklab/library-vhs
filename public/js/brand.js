@@ -1,6 +1,13 @@
 // Code-native brand artwork: small, sharp and available offline.
 export function brandMark() {
-  return `<span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 40 40" fill="none"><rect x="3" y="9" width="34" height="23" rx="4" stroke="currentColor" stroke-width="2"/><rect x="7" y="13" width="26" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/><circle cx="12.5" cy="18.5" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="27.5" cy="18.5" r="3.5" stroke="currentColor" stroke-width="1.5"/><path d="M13 28h14" stroke="currentColor" stroke-width="1.5"/></svg></span>`;
+  return `<span class="brand-mark" aria-hidden="true"><img src="/icon.svg" alt="" width="41" height="41" decoding="async"></span>`;
+}
+
+const REEL = `<svg class="tape-reel" viewBox="-131 -131 262 262" aria-hidden="true"><circle r="129.5" fill="#434247" stroke="#3F3E42" stroke-width="3"/><circle r="68" fill="#C6C6C6"/><path d="M0-42 8.7-32.5 21-36.4 23.8-23.8 36.4-21 32.5-8.7 42 0 32.5 8.7 36.4 21 23.8 23.8 21 36.4 8.7 32.5 0 42-8.7 32.5-21 36.4-23.8 23.8-36.4 21-32.5 8.7-42 0-32.5-8.7-36.4-21-23.8-23.8-21-36.4-8.7-32.5Z" fill="#1E1818"/></svg>`;
+
+/** The app icon at page scale: five stripes running into a cassette's notched edge. */
+export function tapeEdge() {
+  return `<div class="tape-stripes" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><div class="tape-edge" aria-hidden="true">${REEL}${REEL}<span class="tape-spine"><i></i><i></i></span><span class="tape-square"></span></div>`;
 }
 
 export function cassetteArt() {

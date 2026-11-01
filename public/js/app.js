@@ -8,6 +8,7 @@ import { renderLibrary, renderDetail } from "./library.js";
 import {
   renderScan,
   renderAddTitle,
+  renderAddBarcode,
   renderBulk,
 } from "./addflows.js";
 import { renderScouts } from "./scouts.js";
@@ -198,6 +199,9 @@ export function render() {
     case "addTitle":
       renderAddTitle(root);
       break;
+    case "barcode":
+      renderAddBarcode(root);
+      break;
     case "bulk":
       renderBulk(root);
       break;
@@ -242,6 +246,7 @@ function workspaceHeader() {
     backup: "Backup & import",
     detail: "Tape details",
     addTitle: "Add a title",
+    barcode: "Scan a barcode",
     bulk: "Paste a list",
     csv: "Import inventory",
   };

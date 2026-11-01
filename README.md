@@ -76,6 +76,10 @@ The importer sends covers first, then collection records, then scout lists. Requ
 
 Backups exclude passwords, recovery keys, sessions, API keys, profile/settings credentials and **unfinished browser drafts, temporary scan jobs and source photos**. The downloaded file is a portable copy of saved collection/scouting data, not an account-login credential. Cloud records, temporary photos and scan jobs use **Netlify Blobs**; browser photos, review edits and job references also remain in **IndexedDB**. This does not migrate records to a relational database. Downloads are manual backups, not scheduled offsite snapshots or point-in-time recovery. Keep a completed JSON file outside the browser and test importing it into a separate test account before relying on it as your only recovery copy.
 
+## Scan a barcode
+
+**Add tapes → Scan a barcode** opens the rear camera and reads UPC-A, UPC-E, EAN-13 and EAN-8 codes. Browsers with a native `BarcodeDetector` use it; others (including iOS Safari) load the vendored ZXing build from `public/vendor`. A code is accepted after two matching frames, and the numbers can also be typed. `/api/upc` validates the check digit, then collects product titles for that barcode from the eBay Browse API (when configured) and UPCitemdb's free trial lookup (100 requests a day per server IP). A low-effort model call tidies those titles into a title, year, format and edition, using only what the listings say; if it fails, the first listing title is cleaned mechanically. Nothing is invented for an unknown barcode: the person types the title and the barcode is still saved on the tape. Tidied results are cached for 30 days in the `upc-cache` Blobs store, misses and mechanical fallbacks for one day, and the hourly cleanup removes expired entries. Every result is shown for confirmation before the usual details lookup and review.
+
 ## Other collection features
 
 - Searchable cover, list and spreadsheet views; status filters and sorting.
@@ -145,6 +149,7 @@ Authenticated routes use the session cookie and JSON requests/responses. Legacy 
 | `GET /api/scan-jobs/:id` | Owner-only progress/result polling; `{job,pollAfterMs}` with queued/running/completed/failed/expired status, stage, ISO timestamps, result and safe failure details; never image bytes or worker credentials |
 | `POST /api/scan` | Legacy synchronous compatibility: `{image:dataURL,mode:'fast'|'thorough',sourceId,verificationContext?}`; returns title drafts, evidence, confidence, format, counts, warnings and verification status |
 | `POST /api/enrich` | `{items:[{title,year}]}`, maximum 25; optional film details |
+| `POST /api/upc` | `{code,format?}`; a valid UPC/EAN returns `{status:"found",barcode,title,year,format,edition,identifiedBy,sources}` or `{status:"not_found",barcode,sources}` |
 | `GET /api/scouts`; `GET /api/scouts/:id` | List summaries or a full private scout list |
 | `POST /api/scouts` | `{clientId,name,items,photos:[{id,name}]}`; stable list/item IDs merge new entries safely, maximum 1000 items per list |
 | `PATCH /api/scouts/:id` | `{name?,items?:[{clientId,title?,year?,format?,edition?,artist?,visual?,estimate?,estimateFor?,purchasedTapeId?}]}`, maximum 100 item updates; prices include their evaluated `{title,year,format,edition,artist,condition,sealed,packaging,barcode}` as `estimateFor` |

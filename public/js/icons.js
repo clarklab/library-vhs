@@ -16,6 +16,9 @@ export const icons = {
   camera: svg(
     `<path d="M4 8h2.2l1.4-2.2A2 2 0 0 1 9.3 5h5.4a2 2 0 0 1 1.7.8L17.8 8H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="14" r="3.4"/>`,
   ),
+  barcode: svg(
+    `<path d="M3 7V5a1 1 0 0 1 1-1h2M18 4h2a1 1 0 0 1 1 1v2M21 17v2a1 1 0 0 1-1 1h-2M6 20H4a1 1 0 0 1-1-1v-2M7 8v8M10 8v8M13 8v8M15.5 8v8M17.5 8v8"/>`,
+  ),
   keyboard: svg(
     `<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6"/>`,
   ),
