@@ -183,3 +183,32 @@ test("a guest can sign in to an existing account after a warning, or go back", a
   expect(app.requests.some((r) => r.path.endsWith("login"))).toBe(true);
   expect(app.errors).toEqual([]);
 });
+
+test("the sample vault shows 24 tapes in the browser without touching the server, then hands off to a guest vault", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const app = await accountApp(page, { welcome: true });
+  const before = app.requests.length;
+  await page.getByRole("link", { name: "Or see a sample Vault" }).click();
+  await expect(page).toHaveURL(/\?sample$/);
+  await expect(page.locator("[data-tape]")).toHaveCount(24);
+  await expect(page.getByText("The Punisher", { exact: true }).first()).toBeVisible();
+  expect(app.requests.length).toBe(before);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: "test-results/sample-vault-mobile.png" });
+
+  await page.locator(".mobile-tabs [data-tab=scan]").click();
+  await expect(page.getByRole("heading", { name: "This part needs your own vault." })).toBeVisible();
+  expect(app.requests.length).toBe(before);
+
+  await page.goBack();
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "Start your vault." })).toBeVisible();
+
+  await page.goto("/?sample");
+  await expect(page.locator("[data-tape]")).toHaveCount(24);
+  await page.getByRole("button", { name: "Start my own vault" }).first().click();
+  await expect(page.getByRole("button", { name: "Save your vault" }).first()).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  expect(app.requests.filter((r) => r.path === "/api/auth/guest")).toHaveLength(1);
+  expect(app.errors).toEqual([]);
+});

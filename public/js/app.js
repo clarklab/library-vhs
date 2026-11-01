@@ -1,6 +1,6 @@
 // VHS Vault — app shell: state, routing, auth, tab bar.
 
-import { api, getToken, setToken } from "./api.js";
+import { api, getToken, setToken, setRequestOverride } from "./api.js";
 import { icons } from "./icons.js";
 import { esc } from "./util.js";
 import { toast, closeAllSheets } from "./ui.js";
@@ -18,6 +18,7 @@ import { brandMark } from "./brand.js";
 import { renderAuth as renderAuthView, openSaveVault as openSaveVaultSheet } from "./auth-view.js";
 import { renderBackup, disposeBackup } from "./backup.js";
 import { initInstall, maybeOfferInstall } from "./install.js";
+import { SAMPLE_USER, sampleRequest } from "./sample-vault.js";
 
 export const state = {
   user: null,
@@ -59,6 +60,8 @@ window.addEventListener("popstate", (event) => {
   if (state.view === "scan" && entry?.view !== "scan") pauseScanSession();
   const fromView = state.view;
   const fromArg = state.viewArg;
+  // Going back past the sample vault returns to the landing page.
+  if (state.user?.sample && (entry?.view === "auth" || !new URLSearchParams(location.search).has("sample"))) leaveSampleVault();
   if (state.user) {
     state.view = entry?.view && entry.view !== "auth" && (entry.view !== "signin" || state.user.guest) ? entry.view : "library";
     state.viewArg = entry?.arg ?? null;
@@ -167,6 +170,7 @@ export function render() {
     renderGuestSignIn(shell);
     return;
   }
+  if (state.user.sample && SAMPLE_BLOCKED_VIEWS.has(state.view)) state.view = "sampleOnly";
 
   shell.innerHTML = `${sidebar(state.view)}<div class="app-main">${workspaceHeader()}<main id="workspace" tabindex="-1"></main></div>`;
   const root = shell.querySelector("#workspace");
@@ -205,6 +209,9 @@ export function render() {
     case "bulk":
       renderBulk(root);
       break;
+    case "sampleOnly":
+      renderSampleOnly(root);
+      break;
     default:
       renderLibrary(root);
   }
@@ -230,7 +237,9 @@ function sidebar(active) {
     <div class="sidebar-label">Workspace</div>
     <nav aria-label="Main navigation">${NAV_ITEMS.map(([view, icon, label]) => `<button type="button" class="side-link${active === view ? " active" : ""}" data-tab="${view}" ${active === view ? 'aria-current="page"' : ""}>${icons[icon]}<span>${label}</span>${view === "library" ? `<span class="nav-count">${state.tapes.length}</span>` : ""}</button>`).join("")}</nav>
     <div class="sidebar-note"><span class="mono">GOOD TAPES. GOOD COMPANY.</span><p>A little analog.<br>A lot more organized.</p><div class="color-stripes" aria-hidden="true"><i></i><i></i><i></i><i></i></div></div>
-    <div class="sidebar-bottom"><button type="button" class="side-link${["settings", "backup"].includes(active) ? " active" : ""}" data-tab="settings">${icons.settings}<span>Account &amp; backup</span></button>${state.user?.guest
+    <div class="sidebar-bottom"><button type="button" class="side-link${["settings", "backup"].includes(active) ? " active" : ""}" data-tab="settings">${icons.settings}<span>Account &amp; backup</span></button>${state.user?.sample
+      ? `<div class="account guest-account"><span class="account-avatar">${icons.tape}</span><div><strong>Sample vault</strong><p>24 tapes to look around</p></div></div><button type="button" class="btn save-vault-side" data-start-own>Start my own vault</button>`
+      : state.user?.guest
       ? `<div class="account guest-account"><span class="account-avatar">${icons.tape}</span><div><strong>${esc(state.user.displayName || "Guest vault")}</strong><p>Not saved to an account</p></div></div><button type="button" class="btn save-vault-side" data-save-vault>Save your vault</button>`
       : `<div class="account"><span class="account-avatar">${esc((state.user?.email || "V")[0].toUpperCase())}</span><div><strong>${esc(state.user?.displayName || "Your personal vault")}</strong><p>${esc(state.user?.email || "")}</p></div></div>`}</div>
   </aside>`;
@@ -246,11 +255,12 @@ function workspaceHeader() {
     backup: "Backup & import",
     detail: "Tape details",
     addTitle: "Add a title",
+    sampleOnly: "Sample vault",
     barcode: "Scan a barcode",
     bulk: "Paste a list",
     csv: "Import inventory",
   };
-  return `<header class="workspace-header"><div class="breadcrumb"><span>Personal vault</span><span aria-hidden="true">/</span><strong>${labels[state.view] || "Collection"}</strong></div><div class="header-right">${state.user?.guest ? `<button type="button" class="save-vault-chip" data-save-vault aria-label="Save your vault">${icons.check}<span>Save your vault</span></button>` : `<span class="header-note">Made for the love of tape.</span>`}<button type="button" class="icon-button" data-tab="settings" aria-label="Settings">${icons.settings}</button><button type="button" class="icon-button mobile-menu-toggle" data-menu aria-label="Open navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div></header>`;
+  return `<header class="workspace-header"><div class="breadcrumb"><span>${state.user?.sample ? "Sample vault" : "Personal vault"}</span><span aria-hidden="true">/</span><strong>${labels[state.view] || "Collection"}</strong></div><div class="header-right">${state.user?.sample ? `<button type="button" class="save-vault-chip" data-start-own>${icons.check}<span>Start my own vault</span></button>` : state.user?.guest ? `<button type="button" class="save-vault-chip" data-save-vault aria-label="Save your vault">${icons.check}<span>Save your vault</span></button>` : `<span class="header-note">Made for the love of tape.</span>`}<button type="button" class="icon-button" data-tab="settings" aria-label="Settings">${icons.settings}</button><button type="button" class="icon-button mobile-menu-toggle" data-menu aria-label="Open navigation" aria-expanded="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button></div></header>`;
 }
 function tabBar(active) {
   if (active === "backup") active = "settings";
@@ -271,6 +281,7 @@ function wireNavigation(root) {
     );
   });
   root.querySelectorAll(".sidebar [data-save-vault], .workspace-header [data-save-vault]").forEach((button) => button.addEventListener("click", openSaveVault));
+  root.querySelectorAll("[data-start-own]").forEach((button) => button.addEventListener("click", () => startOwnVault(button)));
   root.querySelector(".brand")?.addEventListener("click", (event) => {
     event.preventDefault();
     go("library");
@@ -294,12 +305,60 @@ function renderAuth(root) {
   }, {
     mode: state.authMode,
     async onStartGuest() {
-      const result = await api.startGuest({ expectedToken: getToken() });
-      adoptAccountSession(result);
-      await loadAndEnter({ offerInstall: false });
-      toast("Your vault is open. Start with a shelf photo!", { duration: 3600 });
+      await openGuestVault();
     },
+    onSample: openSampleVault,
   });
+}
+
+async function openGuestVault() {
+  const result = await api.startGuest({ expectedToken: getToken() });
+  adoptAccountSession(result);
+  await loadAndEnter({ offerInstall: false });
+  toast("Your vault is open. Start with a shelf photo!", { duration: 3600 });
+}
+
+// ---------- sample vault ----------
+
+// Views that add, change or back up tapes are not part of the read-only sample.
+const SAMPLE_BLOCKED_VIEWS = new Set(["scan", "addTitle", "bulk", "barcode", "settings", "backup", "signin"]);
+
+/** Opens the in-browser sample collection; the visitor's own session is untouched. */
+export function openSampleVault({ replace = false } = {}) {
+  closeAllSheets();
+  setRequestOverride(sampleRequest);
+  state.user = { ...SAMPLE_USER };
+  state.loaded = false;
+  if (replace) history.replaceState({ view: "library" }, "", "/?sample");
+  else history.pushState({ view: "library" }, "", "/?sample");
+  loadAndEnter({ offerInstall: false });
+}
+
+function leaveSampleVault() {
+  setRequestOverride(null);
+  closeAllSheets();
+  state.user = null;
+  state.tapes = [];
+  state.loaded = false;
+  state.view = "auth";
+  state.authMode = "welcome";
+}
+
+async function startOwnVault(button) {
+  if (button) { button.disabled = true; button.innerHTML = '<span class="spinner"></span> Opening…'; }
+  leaveSampleVault();
+  history.replaceState({ view: "auth" }, "", "/");
+  try {
+    await openGuestVault();
+  } catch (error) {
+    render();
+    toast(error.message, { error: true });
+  }
+}
+
+function renderSampleOnly(root) {
+  root.innerHTML = `<div class="screen sample-only fade-in"><div class="sample-only-card"><div class="tape-stripes sample-only-stripes" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><p class="eyebrow">SAMPLE VAULT</p><h1>This part needs your own vault.</h1><p>The sample is for looking around. Start your own vault to scan shelves, add tapes, check prices and keep backups. No account needed.</p><div class="sample-only-actions"><button type="button" class="btn" data-start-own>Start my own vault ${icons.chevronRight}</button><button type="button" class="btn gray" data-tab="library">Back to the sample</button></div></div></div>`;
+  root.querySelector("[data-start-own]").addEventListener("click", (event) => startOwnVault(event.currentTarget));
 }
 
 /** A guest chose to sign in to an existing account instead of saving this vault. */
@@ -403,6 +462,10 @@ export async function signOut(options = { expectedToken: getToken() }) {
 }
 
 async function boot() {
+  if (new URLSearchParams(location.search).has("sample")) {
+    openSampleVault({ replace: true });
+    return;
+  }
   const expectedToken = getToken();
   const hadSession = Boolean(expectedToken);
   try {

@@ -1178,11 +1178,11 @@ button svg {
 .auth-ways li {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px 7px 9px;
+  gap: 6px;
+  padding: 7px 12px 7px 7px;
   border-radius: 999px;
   background: #fffaf2;
-  border: 1px solid #e6d9c7;
+  border: 1px solid #1e18181f;
   font-size: 13px;
   font-weight: 600;
 }
@@ -1271,6 +1271,7 @@ button svg {
   justify-content: center;
   padding: 50px;
   position: relative;
+  background: #fff;
 }
 .auth-content {
   width: 100%;
@@ -2447,8 +2448,8 @@ input[type="checkbox"] {
     margin-top: 16px;
   }
   .auth-ways li {
-    font-size: 12px;
-    padding: 6px 10px 6px 8px;
+    font-size: 14px;
+    padding: 6px 11px 6px 6px;
   }
   .tape-stripes {
     top: auto;
@@ -3594,39 +3595,33 @@ input[type="checkbox"] {
 /* Welcome and guest vaults */
 .welcome-steps {
   list-style: none;
-  margin: 28px 0 26px;
+  margin: 24px 0;
   padding: 0;
   display: grid;
-  gap: 10px;
 }
 .welcome-steps li {
   display: flex;
-  gap: 14px;
-  align-items: center;
-  padding: 12px 14px;
-  border: 1px solid var(--separator);
-  border-radius: 10px;
-  background: var(--bg-elevated);
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 0;
+  border-top: 1px solid #1e18181a;
   animation: welcome-in 0.5s both cubic-bezier(0.2, 0.8, 0.2, 1);
 }
+.welcome-steps li:first-child { border-top: 0; padding-top: 0; }
+.welcome-steps li:last-child { padding-bottom: 0; }
 .welcome-steps li:nth-child(2) { animation-delay: 0.08s; }
 .welcome-steps li:nth-child(3) { animation-delay: 0.16s; }
-.welcome-steps strong { font-size: 14px; font-weight: 600; }
-.welcome-steps p { font-size: 12px; color: var(--label-secondary); margin-top: 2px; }
-.welcome-step-icon {
-  display: grid;
-  place-items: center;
-  flex-shrink: 0;
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  background: var(--yellow);
-  color: #263c33;
+.welcome-steps p { font-size: 16px; color: var(--label-secondary); }
+.welcome-steps .welcome-step-title { font-weight: 600; color: var(--label); }
+/* Icons sit on the first line of their step, in the brand red. */
+.welcome-step-icon { display: flex; align-items: center; height: 1.5em; font-size: 16px; color: var(--brand-red); flex-shrink: 0; }
+.welcome-step-icon svg { width: 20px; height: 20px; }
+@media (min-width: 640px) {
+  .welcome-steps p { font-size: 14px; }
+  .welcome-steps .welcome-step-title { font-size: 15px; }
+  .welcome-step-icon { font-size: 15px; }
 }
-.welcome-steps li:nth-child(2) .welcome-step-icon { background: #e8ebcf; }
-.welcome-steps li:nth-child(3) .welcome-step-icon { background: var(--tint-fill); color: var(--tint); }
-.welcome-step-icon svg { width: 18px; height: 18px; }
-.welcome-start { width: 100%; justify-content: space-between; }
+.welcome-start { width: 100%; justify-content: space-between; padding-right: 10px; }
 .welcome-content .auth-forgot { display: block; margin: 14px auto 0; }
 @keyframes welcome-in {
   from { opacity: 0; transform: translateY(8px); }
@@ -3688,10 +3683,7 @@ input[type="checkbox"] {
   --tint: var(--brand-red);
   --tint-fill: #f9e1e5;
 }
-.auth-layout .btn:hover:not(:disabled) { background: #a0163a; }
-.welcome-steps .welcome-step-icon { background: #ffcc33; color: var(--brand-ink); }
-.welcome-steps li:nth-child(2) .welcome-step-icon { background: #ffe0d2; color: #c7420f; }
-.welcome-steps li:nth-child(3) .welcome-step-icon { background: var(--tint-fill); color: var(--brand-red); }
+.auth-layout .btn:not(.gray):hover:not(:disabled) { background: #a0163a; }
 
 /* Scan a barcode */
 .barcode-flow { max-width: 560px; }
@@ -3764,7 +3756,7 @@ input[type="checkbox"] {
 }
 .barcode-tip { padding: 10px 2px 0; }
 .barcode-manual { margin-top: 18px; display: grid; gap: 8px; }
-.barcode-manual label { font-size: 13px; font-weight: 500; }
+.barcode-manual label { font-size: 16px; font-weight: 500; }
 .barcode-manual-row { display: flex; gap: 8px; }
 .barcode-manual-row input { flex: 1; min-width: 0; font-variant-numeric: tabular-nums; letter-spacing: 0.04em; }
 .barcode-result { margin-top: 20px; }
@@ -3777,7 +3769,33 @@ input[type="checkbox"] {
 }
 .barcode-match.found { border-color: #c21c4240; }
 .barcode-match h3 { font-size: 22px; letter-spacing: -0.03em; }
-.barcode-match-copy { color: var(--label-secondary); font-size: 14px; margin: 4px 0 14px; }
+.barcode-match-copy { color: var(--label-secondary); font-size: 16px; margin: 4px 0 14px; }
+.barcode-flow .btn:has(> svg:first-child) { padding-left: 10px; }
+.barcode-camera-message { font-size: 16px; }
 @media (max-width: 700px) {
   .barcode-manual-row input, .barcode-match input { font-size: 16px; }
 }
+@media (min-width: 640px) {
+  .barcode-manual label, .barcode-match-copy, .barcode-camera-message { font-size: 14px; }
+}
+
+/* Sample vault */
+.welcome-sample { width: 100%; justify-content: center; margin-top: 10px; text-decoration: none; }
+.sample-only { display: grid; place-items: center; min-height: 60vh; padding: 24px; }
+.sample-only-card {
+  max-width: 460px;
+  padding: 0 28px 28px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--brand-cream);
+  border: 1px solid #e6d9c7;
+}
+.sample-only-card h1 { font-size: 28px; letter-spacing: -0.04em; margin-bottom: 8px; }
+.sample-only-card > p:not(.eyebrow) { color: var(--label-secondary); font-size: 16px; }
+.sample-only-actions [data-start-own] { padding-right: 10px; }
+@media (min-width: 640px) {
+  .sample-only-card > p:not(.eyebrow) { font-size: 15px; }
+}
+.sample-only-card .tape-stripes.sample-only-stripes { position: static; margin: 0 -28px 24px; }
+.sample-only-stripes i { height: 8px; }
+.sample-only-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }

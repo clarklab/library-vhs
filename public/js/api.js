@@ -59,7 +59,14 @@ function diagnosticsText(value) {
   return value ? [value.stage && `Stage: ${value.stage}`, value.durationMs !== undefined && `Duration: ${value.durationMs} ms`, value.providerStatus && `Provider HTTP ${value.providerStatus}`, value.providerType, value.providerRequestId && `Provider request: ${value.providerRequestId}`].filter(Boolean).join(" · ") : "";
 }
 
+// The sample vault answers requests in the browser instead of the server.
+let requestOverride = null;
+export function setRequestOverride(handler) {
+  requestOverride = handler;
+}
+
 async function request(method, path, body, { signal, timeoutMs = 45000, expectedToken } = {}) {
+  if (requestOverride) return requestOverride(method, path, body);
   const headers = { "content-type": "application/json" };
   const token = getToken();
   if (expectedToken !== undefined && token !== expectedToken) throw Object.assign(new ApiError("Your account changed. Sign in again to continue this draft.", 401), { code: "ACCOUNT_CHANGED" });

@@ -440,8 +440,8 @@ export function renderAddBarcode(root) {
         <h3>${matched ? "Found it" : "We couldn’t find this barcode"}</h3>
         <p class="barcode-match-copy">${matched ? "Check the title, then we’ll fill in the details." : "Type the title and we’ll keep the barcode with it."}</p>
         <form class="stack" data-confirm>
-          <input class="text-field" name="title" placeholder="Movie title" autocapitalize="words" value="${esc(matched ? found.title : "")}" required />
-          <input class="text-field" name="year" placeholder="Year (optional)" inputmode="numeric" value="${found.year ?? ""}" />
+          <input class="text-field" name="title" aria-label="Movie title" placeholder="Movie title" autocapitalize="words" value="${esc(matched ? found.title : "")}" required />
+          <input class="text-field" name="year" aria-label="Year (optional)" placeholder="Year (optional)" inputmode="numeric" value="${found.year ?? ""}" />
           <button class="btn" type="submit">${icons.sparkles} Look Up Details</button>
           <button class="btn gray" type="button" data-scan-again>${icons.barcode} Scan a different barcode</button>
         </form>
